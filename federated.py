@@ -10,7 +10,7 @@ from datasets import load_dataset
 from flwr.client.mod import fixedclipping_mod
 from flwr.server.strategy import DifferentialPrivacyClientSideFixedClipping
 from flwr.client.mod.localdp_mod import LocalDpMod
-from flwr.client.mod.localdp_fixed_mod import LocalDpFixedMod
+from fixed.localdp_fixed_mod import LocalDpFixedMod
 from flwr.common import (
     NDArrays,
     Parameters,
@@ -23,7 +23,8 @@ import sys
 from logging import WARNING, ERROR, LogRecord
 import datasets
 import numpy as np
-from datasets import load_dataset
+# from datasets import load_dataset
+from datasets import disable_caching, enable_caching
 import transformers
 from transformers import (
     AutoConfig,
@@ -44,6 +45,7 @@ from transformers.utils.versions import require_version
 from utils import *
 import csv
 
+os.environ["HF_DATASETS_OFFLINE"] = "1"
 
 task_to_keys = {
     "cola": ("sentence", None),
@@ -71,7 +73,7 @@ cfg = get_config("federated")
 raw_datasets = load_dataset(
             "nyu-mll/glue",
             data_args.task_name,
-            cache_dir=model_args.cache_dir,
+            cache_dir="/scratch/wd04/sm0074/hf_cache",
             token=model_args.token,
         )
 is_regression = data_args.task_name == "stsb"

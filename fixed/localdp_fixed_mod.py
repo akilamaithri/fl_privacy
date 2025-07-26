@@ -26,7 +26,7 @@ from flwr.common.constant import MessageType
 from flwr.common.context import Context
 from flwr.server.superlink.state import State, StateFactory
 from flwr.common.differential_privacy import (
-    add_localdp_fixed_gaussian_noise_to_params,
+    add_localdp_gaussian_noise_to_params,
     compute_clip_model_update,
 )
 from flwr.common.logger import log
@@ -128,7 +128,7 @@ class LocalDpFixedMod:
         fit_res.parameters = ndarrays_to_parameters(client_to_server_params)
 
         # Add noise to model params
-        fit_res.parameters = add_localdp_fixed_gaussian_noise_to_params(
+        fit_res.parameters = add_localdp_gaussian_noise_to_params(
             fit_res.parameters, self.noise_list[partition_id]/550
         )
         log(

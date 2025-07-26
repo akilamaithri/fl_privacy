@@ -1,0 +1,33 @@
+#!/bin/bash
+
+#PBS -P wd04
+#PBS -q dgxa100
+#PBS -l ncpus=16
+#PBS -l ngpus=1
+#PBS -l mem=80GB
+#PBS -l jobfs=20GB
+#PBS -l walltime=01:00:00
+#PBS -l storage=scratch/wd04
+#PBS -l wd
+#PBS -M sm0074@student.rmit.edu.au
+#PBS -m be
+
+# Load Python module
+module load python3/3.10.4
+
+# Activate your virtual environment
+source /scratch/wd04/sm0074/venv/flp/bin/activate
+
+export HF_HOME=/scratch/wd04/sm0074/hf_cache
+
+export HF_DATASETS_OFFLINE=1
+
+export HF_DATASETS_CACHE=/scratch/wd04/sm0074/hf_cache
+export TRANSFORMERS_CACHE=/scratch/wd04/sm0074/hf_cache
+export MPLCONFIGDIR=/scratch/wd04/sm0074/hf_cache/mpl_cache
+
+# Run the FL script
+bash ./script.sh > logs/${PBS_JOBID}.log 2>&1
+
+# Optional: deactivate
+deactivate

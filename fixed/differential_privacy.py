@@ -179,7 +179,7 @@ def add_localdp_gaussian_noise_to_params(
     )
     return ndarrays_to_parameters(model_params_ndarrays)
 
-def add_localdp_fixed_gaussian_noise_to_params(
+def add_localdp_gaussian_noise_to_params(
     model_params: Parameters, noise: float
 ) -> Parameters:
     """Add local DP gaussian noise to model parameters."""
