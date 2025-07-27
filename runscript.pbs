@@ -21,6 +21,7 @@ source /scratch/wd04/sm0074/venv/flp/bin/activate
 export HF_HOME=/scratch/wd04/sm0074/hf_cache
 
 export HF_DATASETS_OFFLINE=1
+export HF_HUB_OFFLINE=1 
 
 export HF_DATASETS_CACHE=/scratch/wd04/sm0074/hf_cache
 export TRANSFORMERS_CACHE=/scratch/wd04/sm0074/hf_cache
