@@ -244,6 +244,7 @@ def get_model(model_args,data_args,num_labels):
         token=model_args.token,
         trust_remote_code=model_args.trust_remote_code,
         ignore_mismatched_sizes=model_args.ignore_mismatched_sizes,
+        local_files_only=True,
     )
     return config,tokenizer,model
 
@@ -459,6 +460,7 @@ def get_evaluate_fn(model_args, save_every_round, total_round, save_path,trainin
                 token=model_args.token,
                 trust_remote_code=model_args.trust_remote_code,
                 ignore_mismatched_sizes=model_args.ignore_mismatched_sizes,
+                local_files_only=True,
                 )
             set_parameters(model, parameters)
             def compute_metrics(p: EvalPrediction):

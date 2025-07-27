@@ -67,13 +67,16 @@ class LocalDpFixedMod:
     """
 
     def __init__(
-        self, clipping_norm: float, noise_list
+        self,
+        clipping_norm: float,
+        epsilon_list: list[float],
+        delta_list: list[float]
     ) -> None:
         if clipping_norm <= 0:
             raise ValueError("The clipping norm should be a positive value.")
-
         self.clipping_norm = clipping_norm
-        self.noise_list = noise_list
+        self.epsilon_list = epsilon_list
+        self.delta_list = delta_list
 
     def __call__(
         self, msg: Message, ctxt: Context, call_next: ClientAppCallable
@@ -129,12 +132,16 @@ class LocalDpFixedMod:
 
         # Add noise to model params
         fit_res.parameters = add_localdp_gaussian_noise_to_params(
-            fit_res.parameters, self.noise_list[partition_id]/550
+            fit_res.parameters,
+            epsilon=self.epsilon_list[partition_id],
+            delta=self.delta_list[partition_id],
+            sensitivity=self.clipping_norm, #added 2nd time
         )
         log(
             INFO,
-            "LocalDpMod: local DP noise with %.4f stedv added to parameters",
-            self.noise_list[partition_id],
+            "LocalDpMod: local DP noise added with ε=%.4f, δ=%.1e",
+            self.epsilon_list[partition_id],
+            self.delta_list[partition_id],
         )
 
         out_msg.content = compat.fitres_to_recordset(fit_res, keep_input=True)

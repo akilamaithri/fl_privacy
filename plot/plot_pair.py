@@ -56,7 +56,7 @@ def plot_multiple(title,file_names,dataset):
     plt.tight_layout()
 
     # Save the plot to a file
-    output_file = "./figs/"+dataset+"/"+title+".png"  # Change to your desired file name and format
+    output_file = "/scratch/wd04/sm0074/fl_privacy/figs/"+dataset+"/"+title+".png"  # Change to your desired file name and format
     plt.savefig(output_file, dpi=300, bbox_inches='tight')
     print(f"Plot saved to {output_file}")
 

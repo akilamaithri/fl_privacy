@@ -18,8 +18,10 @@
 # ax.set_xlabel('Partition')
 # ax.set_ylabel('Values')
 # ax.set_title('QQP Linear Noise Value')
+import os
 import matplotlib.pyplot as plt
 import numpy as np
+
 
 # Data
 def plot(title,Our_Theorem,RDP  ):
@@ -49,7 +51,9 @@ def plot(title,Our_Theorem,RDP  ):
     plt.tight_layout()
     plt.show()
         # Save the plot to a file
-    output_file = "./figs/"+title+".png"  # Change to your desired file name and format
+    output_file = "/scratch/wd04/sm0074/fl_privacy/figs/"+title+".png"  # Change to your desired file name and format
+
+    os.makedirs("/scratch/wd04/sm0074/fl_privacy/figs/", exist_ok=True) #added after failing to save
     plt.savefig(output_file, dpi=300, bbox_inches='tight')
     print(f"Plot saved to {output_file}")
 

@@ -50,7 +50,11 @@ def clip_inputs_inplace(input_arrays: NDArrays, clipping_norm: float) -> None:
     FlatClip method of the paper: https://arxiv.org/abs/1710.06963
     """
     input_norm = get_norm(input_arrays)
-    scaling_factor = min(1, clipping_norm / input_norm)
+    # scaling_factor = min(1, clipping_norm / input_norm) - Changed to avoid division by zero
+    if input_norm == 0:
+        scaling_factor = 1.0  # No scaling needed
+    else:
+        scaling_factor = min(1, clipping_norm / input_norm)
     for array in input_arrays:
         array *= scaling_factor
 
@@ -179,7 +183,7 @@ def add_localdp_gaussian_noise_to_params(
     )
     return ndarrays_to_parameters(model_params_ndarrays)
 
-def add_localdp_gaussian_noise_to_params(
+def add_localdp_fixed_gaussian_noise_to_params(
     model_params: Parameters, noise: float
 ) -> Parameters:
     """Add local DP gaussian noise to model parameters."""

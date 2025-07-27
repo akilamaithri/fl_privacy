@@ -1,0 +1,7 @@
+Round,Accuracy,Info
+5,0.5091743119266054,"{'eval_loss': 97.30390167236328, 'eval_accuracy': 0.5091743119266054, 'eval_runtime': 3.178, 'eval_samples_per_second': 274.384, 'eval_steps_per_second': 17.306}"
+1,0.5091743119266054,"{'eval_loss': 43.40767288208008, 'eval_model_preparation_time': 0.0032, 'eval_accuracy': 0.5091743119266054, 'eval_runtime': 3.0564, 'eval_samples_per_second': 285.308, 'eval_steps_per_second': 35.663}"
+6,0.5091743119266054,"{'eval_loss': 133.29977416992188, 'eval_accuracy': 0.5091743119266054, 'eval_runtime': 2.8869, 'eval_samples_per_second': 302.056, 'eval_steps_per_second': 19.052}"
+7,0.5091743119266054,"{'eval_loss': 152.88572692871094, 'eval_accuracy': 0.5091743119266054, 'eval_runtime': 2.831, 'eval_samples_per_second': 308.017, 'eval_steps_per_second': 19.428}"
+2,0.5091743119266054,"{'eval_loss': 41.56632995605469, 'eval_model_preparation_time': 0.0033, 'eval_accuracy': 0.5091743119266054, 'eval_runtime': 2.2274, 'eval_samples_per_second': 391.488, 'eval_steps_per_second': 48.936}"
+8,0.4908256880733945,"{'eval_loss': nan, 'eval_accuracy': 0.4908256880733945, 'eval_runtime': 2.8565, 'eval_samples_per_second': 305.264, 'eval_steps_per_second': 19.254}"

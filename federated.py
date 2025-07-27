@@ -112,6 +112,7 @@ model = AutoModelForSequenceClassification.from_pretrained(
     token=model_args.token,
     trust_remote_code=model_args.trust_remote_code,
     ignore_mismatched_sizes=model_args.ignore_mismatched_sizes,
+    local_files_only=True,
 )
 initial_param = [val.cpu().numpy() for _, val in model.state_dict().items()]
 print(type(initial_param))
@@ -283,9 +284,13 @@ dataset_size = len(fds.load_partition(0))
 with open('noise_epsilon_6.json', 'r') as file:
     noise = json.load(file)
 noise_list = noise[data_args.task_name][data_args.partition_policy][data_args.accountant]
+
+epsilon_list = [data_args.epsilon] * cfg.flower.num_clients
+delta_list = [1.0 / dataset_size] * cfg.flower.num_clients
+
 if(len(noise_list)!=4):
     exit()
-local_dp_obj = LocalDpFixedMod(cfg.flower.dp.clipping_norm, noise_list)   
+local_dp_obj = LocalDpFixedMod(cfg.flower.dp.clipping_norm, epsilon_list, delta_list) 
 client = fl.client.ClientApp(
     client_fn=gen_client_fn(
         fds,

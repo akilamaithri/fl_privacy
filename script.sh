@@ -8,6 +8,6 @@ python federated.py \
   --partition_policy Linear \
   --epsilon 6 \
   --accountant RDP \
-  --per_device_train_batch_size 550 \
+  --per_device_train_batch_size 128 \
   --learning_rate 2e-5\
   --output_dir /tmp/SST2/
