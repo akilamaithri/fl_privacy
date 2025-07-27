@@ -1,0 +1,15 @@
+
+======================================================================================
+                  Resource Usage on 2025-07-27 12:37:45:
+   Job Id:             145996767.gadi-pbs
+   Project:            wd04
+   Exit Status:        -29 (Job failed due to exceeding walltime)
+   Service Units:      72.84
+   NCPUs Requested:    16                     NCPUs Used: 16              
+                                           CPU Time Used: 02:16:03        
+   Memory Requested:   80.0GB                Memory Used: 31.55GB         
+   NGPUs Requested:    1                 GPU Utilisation: 77%             
+                                         GPU Memory Used: 43.63GB         
+   Walltime requested: 01:00:00            Walltime Used: 01:00:42        
+   JobFS requested:    20.0GB                 JobFS used: 84.64MB         
+======================================================================================
