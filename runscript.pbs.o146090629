@@ -1,0 +1,15 @@
+
+======================================================================================
+                  Resource Usage on 2025-07-29 03:46:01:
+   Job Id:             146090629.gadi-pbs
+   Project:            wd04
+   Exit Status:        0
+   Service Units:      87.36
+   NCPUs Requested:    16                     NCPUs Used: 16              
+                                           CPU Time Used: 02:34:22        
+   Memory Requested:   80.0GB                Memory Used: 37.77GB         
+   NGPUs Requested:    1                 GPU Utilisation: 11%             
+                                         GPU Memory Used: 11.61GB         
+   Walltime requested: 02:00:00            Walltime Used: 01:12:48        
+   JobFS requested:    20.0GB                 JobFS used: 98.82MB         
+======================================================================================

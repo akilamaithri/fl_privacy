@@ -11,6 +11,8 @@
 #PBS -l wd
 #PBS -M s4160163@student.rmit.edu.au
 #PBS -m abe
+#PBS -e logs/server/
+#PBS -o logs/server/
 
 # Load Python module
 module load python3/3.10.4

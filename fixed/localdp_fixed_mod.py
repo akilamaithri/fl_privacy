@@ -25,8 +25,10 @@ from flwr.common import recordset_compat as compat
 from flwr.common.constant import MessageType
 from flwr.common.context import Context
 from flwr.server.superlink.state import State, StateFactory
-from flwr.common.differential_privacy import (
+# from flwr.common.differential_privacy import ( -- not using flwr cls
+from fixed.differential_privacy import (
     add_localdp_gaussian_noise_to_params,
+    add_localdp_fixed_gaussian_noise_to_params,  # -- added for fixed noise by authors
     compute_clip_model_update,
 )
 from flwr.common.logger import log
@@ -56,6 +58,15 @@ class LocalDpFixedMod:
         fails to provide the desired level of privacy.
         A smaller value of delta indicates a stricter privacy guarantee.
 
+    epsilon_list : list[float] | None
+        Per-client epsilon values when using epsilon/delta based accounting.
+    delta_list : list[float] | None
+        Per-client delta values when using epsilon/delta based accounting.
+    noise_list : list[float] | None
+        Pre-computed noise standard deviations for each client. When provided,
+        ``epsilon_list`` and ``delta_list`` are ignored and ``noise_list`` is
+        used to add Gaussian noise.
+
     Examples
     --------
     Create an instance of the local DP mod and add it to the client-side mods:
@@ -69,14 +80,25 @@ class LocalDpFixedMod:
     def __init__(
         self,
         clipping_norm: float,
-        epsilon_list: list[float],
-        delta_list: list[float]
+        # epsilon_list: list[float],
+        # delta_list: list[float]
+        # now accepts either epsi./delta or a noise list
+        epsilon_list: list[float] | None = None,
+        delta_list: list[float] | None = None,
+        noise_list: list[float] | None = None,
     ) -> None:
         if clipping_norm <= 0:
             raise ValueError("The clipping norm should be a positive value.")
+        # new check
+        if noise_list is None and (epsilon_list is None or delta_list is None):
+            raise ValueError(
+                "Either `noise_list` or both `epsilon_list` and `delta_list` must be provided."
+            )
         self.clipping_norm = clipping_norm
         self.epsilon_list = epsilon_list
         self.delta_list = delta_list
+        # new
+        self.noise_list = noise_list 
 
     def __call__(
         self, msg: Message, ctxt: Context, call_next: ClientAppCallable
@@ -130,19 +152,44 @@ class LocalDpFixedMod:
 
         fit_res.parameters = ndarrays_to_parameters(client_to_server_params)
 
-        # Add noise to model params
-        fit_res.parameters = add_localdp_gaussian_noise_to_params(
-            fit_res.parameters,
-            epsilon=self.epsilon_list[partition_id],
-            delta=self.delta_list[partition_id],
-            sensitivity=self.clipping_norm, #added 2nd time
-        )
-        log(
-            INFO,
-            "LocalDpMod: local DP noise added with ε=%.4f, δ=%.1e",
-            self.epsilon_list[partition_id],
-            self.delta_list[partition_id],
-        )
+        # Add noise to model params - codex suggestion
+        # fit_res.parameters = add_localdp_gaussian_noise_to_params(
+        #     fit_res.parameters,
+        #     epsilon=self.epsilon_list[partition_id],
+        #     delta=self.delta_list[partition_id],
+        #     sensitivity=self.clipping_norm, #added 2nd time
+        # )
+        # log(
+        #     INFO,
+        #     "LocalDpMod: local DP noise added with ε=%.4f, δ=%.1e",
+        #     self.epsilon_list[partition_id],
+        #     self.delta_list[partition_id],
+        # )
+
+        if self.noise_list is not None:
+            noise = self.noise_list[partition_id]
+            fit_res.parameters = add_localdp_fixed_gaussian_noise_to_params(
+                fit_res.parameters,
+                noise,
+            )
+            log(
+                INFO,
+                "LocalDpMod: local DP noise added with \u03c3=%.4f",
+                noise,
+            )
+        else:
+            fit_res.parameters = add_localdp_gaussian_noise_to_params(
+                fit_res.parameters,
+                epsilon=self.epsilon_list[partition_id],
+                delta=self.delta_list[partition_id],
+                sensitivity=self.clipping_norm,
+            )
+            log(
+                INFO,
+                "LocalDpMod: local DP noise added with ε=%.4f, δ=%.1e",
+                self.epsilon_list[partition_id],
+                self.delta_list[partition_id],
+            )
 
         out_msg.content = compat.fitres_to_recordset(fit_res, keep_input=True)
         return out_msg

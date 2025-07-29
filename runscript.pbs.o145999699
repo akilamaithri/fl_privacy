@@ -1,0 +1,15 @@
+
+======================================================================================
+                  Resource Usage on 2025-07-27 15:18:42:
+   Job Id:             145999699.gadi-pbs
+   Project:            wd04
+   Exit Status:        271 (Linux Signal 15 SIGTERM Termination)
+   Service Units:      32.92
+   NCPUs Requested:    16                     NCPUs Used: 16              
+                                           CPU Time Used: 00:57:53        
+   Memory Requested:   80.0GB                Memory Used: 30.31GB         
+   NGPUs Requested:    1                 GPU Utilisation: 69%             
+                                         GPU Memory Used: 11.6GB          
+   Walltime requested: 02:00:00            Walltime Used: 00:27:26        
+   JobFS requested:    20.0GB                 JobFS used: 36.53MB         
+======================================================================================

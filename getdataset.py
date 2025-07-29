@@ -11,18 +11,18 @@ os.environ["HF_DATASETS_OFFLINE"] = "0" # Ensure it's not offline for download
 
 print(f"Downloading to HF_HOME: {os.environ.get('HF_HOME')}")
 
-# print("Downloading nyu-mll/glue (this might take a while)...")
-# try:
-#     # --- CHANGE THIS LINE ---
-#     load_dataset("nyu-mll/glue", "sst2") # <-- Make sure you're asking for 'sst2' here
-#     # -----------------------
-#     print("nyu-mll/glue with config 'sst2' downloaded and cached successfully.")
-# except Exception as e:
-#     print(f"Error during download: {e}")
+print("Downloading nyu-mll/glue (this might take a while)...")
+try:
+    # --- CHANGE THIS LINE ---
+    load_dataset("nyu-mll/glue", "qqp") # <-- Make sure you're asking for 'sst2' here
+    # -----------------------
+    print("nyu-mll/glue with config 'qqp' downloaded and cached successfully.")
+except Exception as e:
+    print(f"Error during download: {e}")
 
 print("\nDownloading 'glue' evaluation metric...")
 try:
-    metric = evaluate.load("glue", config_name="sst2") # Specify config_name if needed, often not for metric itself
+    metric = evaluate.load("glue", config_name="qqp") # Specify config_name if needed, often not for metric itself
     print("'glue' evaluation metric downloaded and cached successfully.")
 except Exception as e:
     print(f"Error during metric download: {e}")

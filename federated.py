@@ -9,7 +9,7 @@ from flwr_datasets.partitioner import IidPartitioner,LinearPartitioner,SquarePar
 from datasets import load_dataset
 from flwr.client.mod import fixedclipping_mod
 from flwr.server.strategy import DifferentialPrivacyClientSideFixedClipping
-from flwr.client.mod.localdp_mod import LocalDpMod
+# from flwr.client.mod.localdp_mod import LocalDpMod    - this import is not used (codex)
 from fixed.localdp_fixed_mod import LocalDpFixedMod
 from flwr.common import (
     NDArrays,
@@ -263,7 +263,7 @@ label_list = fds.load_partition(0).features["label"].names
 num_labels = len(label_list)
 # visualize_partitions(fds_train)
 # local_dp_obj = LocalDpMod(cfg.flower.dp.clipping_norm, cfg.flower.dp.sensitivity, cfg.flower.dp.epsilon, cfg.flower.dp.delta)
-dataset_size = len(fds.load_partition(0))
+# dataset_size = len(fds.load_partition(0)). -- codex suggestion
 # my_sum = 0
 # for index in range(cfg.flower.num_clients):
 #     my_sum += len(fds.load_partition(index))
@@ -281,16 +281,29 @@ dataset_size = len(fds.load_partition(0))
 #     noise_list.append(sigma)
 # exit()
 
-with open('noise_epsilon_6.json', 'r') as file:
+# Build list of noises from JSON
+with open('noise_epsilon_10.json', 'r') as file:
     noise = json.load(file)
 noise_list = noise[data_args.task_name][data_args.partition_policy][data_args.accountant]
 
-epsilon_list = [data_args.epsilon] * cfg.flower.num_clients
-delta_list = [1.0 / dataset_size] * cfg.flower.num_clients
+# epsilon_list = [data_args.epsilon] * cfg.flower.num_clients
+# delta_list = [1.0 / dataset_size] * cfg.flower.num_clients
 
-if(len(noise_list)!=4):
+# if(len(noise_list)!=4):
+#     exit()
+
+if len(noise_list) != cfg.flower.num_clients:
     exit()
-local_dp_obj = LocalDpFixedMod(cfg.flower.dp.clipping_norm, epsilon_list, delta_list) 
+
+# local_dp_obj = LocalDpFixedMod(cfg.flower.dp.clipping_norm, epsilon_list, delta_list) 
+
+# codex suggestion - Load noise values and and constrcut LocalDpFixedMod
+# noise_list = [0.15, 0.15,..] as of now
+local_dp_obj = LocalDpFixedMod(
+    cfg.flower.dp.clipping_norm,
+    noise_list=noise_list,
+)
+
 client = fl.client.ClientApp(
     client_fn=gen_client_fn(
         fds,
