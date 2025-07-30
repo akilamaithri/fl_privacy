@@ -38,10 +38,10 @@ def get_norm(input_arrays: NDArrays) -> float:
 
 def add_gaussian_noise_inplace(input_arrays: NDArrays, std_dev: float) -> None:
     """Add Gaussian noise to each element of the input arrays."""
-    print("Before is : {0}".format(input_arrays[0][0][0]))
+    print("Before noise is : {0}".format(input_arrays[0][0][0]))
     for array in input_arrays:
         array += np.random.normal(0, std_dev, array.shape)
-    print("After is : {0}".format(input_arrays[0][0][0]))
+    print("After noise is : {0}".format(input_arrays[0][0][0]))
 
         
 def clip_inputs_inplace(input_arrays: NDArrays, clipping_norm: float) -> None:

@@ -70,6 +70,7 @@ model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 cfg = get_config("federated")
 
 #Server config
+# was "nyu-mll/glue"
 raw_datasets = load_dataset(
             "nyu-mll/glue",
             data_args.task_name,
@@ -216,12 +217,13 @@ def server_fn(context: Context):
             1,
             cfg.flower.num_rounds,
             "./result_model",
-            training_args,
+            training_args, #checktraining_args
             eval_dataset,
             tokenizer,
             data_collator,
             metric,
             model_performance_file
+            # save_every_round=1, # Save every round - Added later
     ),
     )
 
@@ -254,6 +256,7 @@ elif(data_args.partition_policy == "Manual"):
     partition_sizes = [1000,1000,1000,1000]
     partitioner = SizePartitioner(partition_sizes)
     
+# was "nyu-mll/glue"
 fds = FederatedDataset(
     dataset="nyu-mll/glue",
     subset=data_args.task_name,
@@ -311,8 +314,8 @@ client = fl.client.ClientApp(
         model_args,
         data_args,
         label_list
-    ),
-    mods=[local_dp_obj] 
+    )
+    # mods=[local_dp_obj] 
 )
 
 server = fl.server.ServerApp(server_fn=server_fn)

@@ -1,10 +1,10 @@
 # Federated Instruction Tuning on General Dataset
 flower:
-    num_clients: 4 # total number of clients
-    num_rounds: 5 # was 8
-    fraction_fit: 1
+    num_clients: 4 # total number of clients (4)
+    num_rounds: 3 # was 8
+    fraction_fit: 1 # all clients are participating in each round
     client_resources:
       num_cpus: 1 
       num_gpus: 1 
     dp:
-      clipping_norm: 10 # was 3
+      clipping_norm: 1000 # was 3, 10 = No Clipping

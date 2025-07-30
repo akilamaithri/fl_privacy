@@ -1,0 +1,4 @@
+Round,Accuracy,Info
+1,0.8475196778326927,"{'eval_loss': 0.35974812507629395, 'eval_model_preparation_time': 0.0034, 'eval_accuracy': 0.8475196778326927, 'eval_runtime': 11.5748, 'eval_samples_per_second': 471.974, 'eval_steps_per_second': 59.008}"
+2,0.870950027457441,"{'eval_loss': 0.31295421719551086, 'eval_model_preparation_time': 0.0038, 'eval_accuracy': 0.870950027457441, 'eval_runtime': 11.3454, 'eval_samples_per_second': 481.518, 'eval_steps_per_second': 60.201}"
+3,0.8736957715540912,"{'eval_loss': 0.3014790117740631, 'eval_model_preparation_time': 0.0034, 'eval_accuracy': 0.8736957715540912, 'eval_runtime': 11.337, 'eval_samples_per_second': 481.873, 'eval_steps_per_second': 60.245}"

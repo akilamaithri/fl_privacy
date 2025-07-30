@@ -6,7 +6,7 @@
 #PBS -l ngpus=1
 #PBS -l mem=80GB
 #PBS -l jobfs=20GB
-#PBS -l walltime=02:00:00
+#PBS -l walltime=03:00:00
 #PBS -l storage=scratch/wd04
 #PBS -l wd
 #PBS -M s4160163@student.rmit.edu.au

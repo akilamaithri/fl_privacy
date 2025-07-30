@@ -43,6 +43,7 @@ task_to_keys = {
 }
 logger = logging.getLogger(__name__)
 
+
 @dataclass
 class DataTrainingArguments:
     """
@@ -149,7 +150,7 @@ class DataTrainingArguments:
                 validation_extension == train_extension
             ), "`validation_file` should have the same extension (csv or json) as `train_file`."
 
-
+# used with HfArgumentParser to pass CLI arguments (from job script) into Python objects.
 @dataclass
 class ModelArguments:
     """
@@ -294,8 +295,9 @@ class HuggingFaceClient(fl.client.NumPyClient):
         print(eval_res)
         return float(eval_res["eval_loss"]), len(self.eval_dataset), {"accuracy": float(eval_res["eval_accuracy"])}
 
+    # this function has no .save_model()
     def fit(self, parameters, config):
-        self.set_parameters(parameters)
+        self.set_parameters(parameters) # sets current global weights.
         def compute_metrics(p: EvalPrediction):
             preds = p.predictions[0] if isinstance(p.predictions, tuple) else p.predictions
             preds = np.argmax(preds, axis=1)
@@ -314,6 +316,8 @@ class HuggingFaceClient(fl.client.NumPyClient):
             data_collator=self.data_collator
         )
         results = trainer.train()
+        # debug print
+        print(f"[Client] Training complete: loss={results.training_loss}, steps={results.global_step}")
         metrics = {}
         eval_res = trainer.evaluate()
         metrics['eval_loss'] = eval_res['eval_loss']
@@ -445,12 +449,15 @@ def get_evaluate_fn(model_args, save_every_round, total_round, save_path,trainin
             model.load_state_dict(state_dict)
 
     def evaluate(server_round: int, parameters, config) -> Optional[Tuple[float, Dict[str, Scalar]]]:
+        print(f"[Server] Called evaluate() for round {server_round}")
         loss = 0
         accuracy = 0
         # Save model
-        if server_round != 0 and (
+        # was if server_round != 0
+        if server_round >= 1 and (
             server_round == total_round or server_round % save_every_round == 0
         ):
+
             # Init model
             model = AutoModelForSequenceClassification.from_pretrained(
                 model_args.model_name_or_path,
@@ -486,8 +493,9 @@ def get_evaluate_fn(model_args, save_every_round, total_round, save_path,trainin
             with open(model_performance_file, mode='a', newline='') as file:
                 writer = csv.writer(file)
                 writer.writerow(row)  # Writing a new row in each iteration
-            # print("FINAL IS HERE")
-            # print(eval_res)
-        # return float(loss), {"accuracy":accuracy}
-        return 0.0, {}
+            print("FINAL IS HERE")
+            print(eval_res)
+        return float(loss), {"accuracy":accuracy}
+        # return 0.0, {}
     return evaluate
+    # was return evaluate
