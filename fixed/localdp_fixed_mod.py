@@ -15,7 +15,7 @@
 """Local DP modifier."""
 
 
-from logging import INFO
+from logging import INFO, WARNING
 
 import numpy as np
 
@@ -86,6 +86,7 @@ class LocalDpFixedMod:
         epsilon_list: list[float] | None = None,
         delta_list: list[float] | None = None,
         noise_list: list[float] | None = None,
+        sigma_min: float | None = None,
     ) -> None:
         if clipping_norm <= 0:
             raise ValueError("The clipping norm should be a positive value.")
@@ -98,7 +99,15 @@ class LocalDpFixedMod:
         self.epsilon_list = epsilon_list
         self.delta_list = delta_list
         # new
-        self.noise_list = noise_list 
+        self.noise_list = noise_list
+        self.sigma_min = sigma_min
+        self.current_noise: dict[int, float] | None = None
+
+    def set_noise(self, partition_id: int, noise: float) -> None:
+        """Set dynamic noise for a given partition."""
+        if self.current_noise is None:
+            self.current_noise = {}
+        self.current_noise[partition_id] = noise
 
     def __call__(
         self, msg: Message, ctxt: Context, call_next: ClientAppCallable
@@ -166,8 +175,21 @@ class LocalDpFixedMod:
         #     self.delta_list[partition_id],
         # )
 
-        if self.noise_list is not None:
+        noise: float | None = None
+        if self.current_noise is not None and partition_id in self.current_noise:
+            noise = self.current_noise[partition_id]
+        elif self.noise_list is not None:
             noise = self.noise_list[partition_id]
+
+        if noise is not None:
+            if self.sigma_min is not None and noise < self.sigma_min:
+                log(
+                    WARNING,
+                    "LocalDpMod: noise %.4f below sigma_min %.4f, using sigma_min.",
+                    noise,
+                    self.sigma_min,
+                )
+                noise = self.sigma_min
             fit_res.parameters = add_localdp_fixed_gaussian_noise_to_params(
                 fit_res.parameters,
                 noise,

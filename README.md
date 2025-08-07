@@ -25,8 +25,9 @@ This project implements federated fine‑tuning of transformer models on GLUE da
 Configuration for Flower resides in `conf/federated.yaml`, specifying number of clients, rounds, resources and DP clipping norms
 
 ### Differential Privacy
-* `fixed/localdp_fixed_mod.py` defines a Flower “mod” that clips client updates and injects Gaussian noise before sending them to the server. 
+* `fixed/localdp_fixed_mod.py` defines a Flower “mod” that clips client updates and injects Gaussian noise before sending them to the server.
 * The noise depends on the client partition id and a predefined noise list
+* Clients can override this via `set_noise(partition_id, noise)`, which enforces a minimum `sigma_min`
 * Precomputed noise levels for different datasets and partition policies are in noise_epsilon_6.json and noise_epsilon_10.json.
 
 ### Running Experiments
