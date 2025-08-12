@@ -29,7 +29,6 @@ from transformers import (
 from typing import Callable, Dict, Tuple
 import csv
 
-from privacy_tools.rdp_accountant import compute_rdp, get_privacy_spent
 
 task_to_keys = {
     "cola": ("sentence", None),
@@ -203,23 +202,6 @@ class ModelArguments:
         metadata={"help": "Will enable to load a pretrained model whose head dimensions are different."},
     )
 
-# --- BEGIN PATCH: DP arguments --------------------------------------
-@dataclass
-class DpArguments:
-    """Noise/clipping knobs + loss->scale scheduler bounds (used by strategy)."""
-    base_sigma: float = field(default=0.02, metadata={"help": "Base Gaussian noise std"}) #was 0.8
-    sigma_min: float = field(default=0.01, metadata={"help": "Lower clamp for per-round sigma_t"}) # was 0.3
-    sigma_max: float = field(default=0.05, metadata={"help": "Upper clamp for per-round sigma_t"}) #was 2.0
-    clipping_norm: float = field(default=3.0, metadata={"help": "Per-example L2 clipping norm C"})
-
-    # Server-side scheduler (loss -> multiplicative scale)
-    loss_scale_lo: float = field(default=0.90, metadata={"help": "Lower bound for sigma_scale"}) # was 0.90
-    loss_scale_hi: float = field(default=1.15, metadata={"help": "Upper bound for sigma_scale"}) #was 1.15
-    loss_scale_k:  float = field(default=0.50, metadata={"help": "Gain for tanh mapping"})
-    loss_scale_ref: float = field(default=0.70, metadata={"help": "Reference loss center for tanh"})
-# --- END PATCH -------------------------------------------------------
-
-
 def get_config(config_name: str):
     with initialize(config_path="./conf", version_base="1.1"):
         cfg = compose(config_name=config_name)
@@ -270,7 +252,7 @@ def get_model(model_args,data_args,num_labels):
 
 class HuggingFaceClient(fl.client.NumPyClient):
 
-    def __init__(self,model,train_dataset, eval_dataset, training_args,processing_class,data_collator,task_name, dp_args: Optional["DpArguments"] = None):
+    def __init__(self,model,train_dataset, eval_dataset, training_args,processing_class,data_collator,task_name):
         self.model = model
         self.train_dataset = train_dataset
         self.eval_dataset = eval_dataset
@@ -278,7 +260,6 @@ class HuggingFaceClient(fl.client.NumPyClient):
         self.processing_class = processing_class
         self.data_collator = data_collator
         self.dataset_name = task_name
-        self.dp_args = dp_args 
 
         #end
     def get_parameters(self,config):
@@ -292,24 +273,11 @@ class HuggingFaceClient(fl.client.NumPyClient):
         
     def evaluate(self, parameters, config):
         self.set_parameters(parameters)
-        # --- BEGIN PATCH: dynamic sigma plumbing (read-only here) ---
-        # Server may broadcast per-round 'sigma_scale' in Flower config.
-        scale = float(config.get("sigma_scale", 1.0))
-        sigma_t = None
-        if self.dp_args is not None:
-            # Compute the intended per-round sigma for logging/metrics
-            base = float(self.dp_args.base_sigma)
-            lo   = float(self.dp_args.sigma_min)
-            hi   = float(self.dp_args.sigma_max)
-            sigma_t = float(np.clip(base * scale, lo, hi))
-            # Note: actual DP noise application is wired in federated.py (trainer/optimizer hook).
-        # Debug log to stdout (also useful in PBS logs)
-        if sigma_t is not None:
-            print(f"[Client] sigma_scale={scale:.4f} -> sigma_t={sigma_t:.4f} "
-                  f"(clamp[{self.dp_args.sigma_min},{self.dp_args.sigma_max}]), C={self.dp_args.clipping_norm}")
-        else:
-            print(f"[Client] sigma_scale={scale:.4f} (dp_args not provided here)")
-        # --- END PATCH ------------------------------------------------
+        # new addition
+        self.noise_scale = config.get("noise_scale", None)
+        if self.noise_scale is not None:
+            print(f"[Client] Received noise_scale: {self.noise_scale}")
+        # new addition end
         def compute_metrics(p: EvalPrediction):
             preds = p.predictions[0] if isinstance(p.predictions, tuple) else p.predictions
             preds = np.argmax(preds, axis=1)
@@ -335,25 +303,6 @@ class HuggingFaceClient(fl.client.NumPyClient):
     # this function has no .save_model()
     def fit(self, parameters, config):
         self.set_parameters(parameters) # sets current global weights.
-
-        # 5pm 12aug
-        orig_state = {k: v.detach().cpu().clone() for k, v in self.model.state_dict().items()}    
-
-        # --- dynamic sigma (same as evaluate) ---
-        scale = float(config.get("sigma_scale", 1.0))
-        sigma_t = None
-        if self.dp_args is not None:
-            base = float(self.dp_args.base_sigma)
-            lo   = float(self.dp_args.sigma_min)
-            hi   = float(self.dp_args.sigma_max)
-            sigma_t = float(np.clip(base * scale, lo, hi)) #fix
-        if sigma_t is not None:
-            print(f"[Client] sigma_scale={scale:.4f} -> sigma_t={sigma_t:.4f} "
-                  f"(clamp[{self.dp_args.sigma_min},{self.dp_args.sigma_max}]), C={self.dp_args.clipping_norm}")
-        else:
-            print(f"[Client] sigma_scale={scale:.4f} (dp_args not provided here)")
-        # ---------------------------------------
-
         def compute_metrics(p: EvalPrediction):
             preds = p.predictions[0] if isinstance(p.predictions, tuple) else p.predictions
             preds = np.argmax(preds, axis=1)
@@ -372,79 +321,20 @@ class HuggingFaceClient(fl.client.NumPyClient):
             data_collator=self.data_collator
         )
         results = trainer.train()
+
+        #new addition
+        train_loss = results.training_loss
+
         # debug print
         print(f"[Client] Training complete: loss={results.training_loss}, steps={results.global_step}")
         metrics = {}
         eval_res = trainer.evaluate()
         metrics['eval_loss'] = eval_res['eval_loss']
         metrics['eval_accuracy'] = eval_res['eval_accuracy']
-        # --- BEGIN PATCH: include noise fields in metrics for the server ---
-        metrics['sigma_scale'] = scale
-        if sigma_t is not None:
-            metrics['sigma_t'] = sigma_t
-        # --- END PATCH -----------------------------------------------------
-        metrics = {**metrics, "eval_loss": metrics['eval_loss'], "eval_accuracy":  metrics['eval_accuracy']}
-        
-        noised_state = {}
-        C = float(self.dp_args.clipping_norm) if self.dp_args is not None else 1.0
-        if sigma_t is None:
-            print("[Client] WARNING: dp_args/sigma_t missing, returning un-noised params")
-            return (
-                [val.detach().cpu().numpy() for _, val in self.model.state_dict().items()],
-                len(self.train_dataset),
-                metrics,
-            )
-        
-        param_keys = [name for name, p in self.model.named_parameters()
-                      if p.requires_grad and torch.is_floating_point(p)] # added 5pm 12aug
-
-        # Compute flat ℓ2 norm of the whole update across all tensors
-            # upd_norm_sq = 0.0
-            # for k, new_t in self.model.state_dict().items():
-            #     d = (new_t.detach().cpu() - orig_state[k])
-            #     upd_norm_sq += float(d.pow(2).sum().item())
-            # upd_norm = float(np.sqrt(upd_norm_sq) + 1e-12)
-
-            # clip_factor = min(1.0, C / upd_norm)
-            
-        # 1) Compute global update norm over trainable float params
-        upd_norm_sq = 0.0
-        sd_now = self.model.state_dict()
-        for k in param_keys:
-            d = (sd_now[k].detach().cpu() - orig_state[k])
-            upd_norm_sq += float(d.pow(2).sum().item())
-        upd_norm = float(np.sqrt(upd_norm_sq) + 1e-12)
-        clip_factor = min(1.0, C / upd_norm)
-
-        # 2) Start from the *current* (post-training) state on CPU; overwrite only trainable float params
-        curr_state = {k: v.detach().cpu() for k, v in sd_now.items()}
-
-        # Apply clipping and add Gaussian noise tensor-wise
-            # for k, new_t in self.model.state_dict().items():
-            #     d = (new_t.detach().cpu() - orig_state[k]) * clip_factor
-            #     noise = torch.normal(mean=0.0, std=sigma_t, size=d.shape)  # iid Gaussian
-            #     noised_state[k] = orig_state[k] + d + noise
-        for k in param_keys:
-            d = (sd_now[k].detach().cpu() - orig_state[k]) * clip_factor
-            noise = torch.randn_like(d) * sigma_t  # wrong
-            # torch. - test gaussian
-            # normalization
-            # run 1 -  no norm
-            # run 2 -  with norm
-            # see which tensors get the noise in transformers
-            # 
-            curr_state[k] = orig_state[k] + noise
-
-        # 5) Convert back to the return format (list of ndarrays)
-        # noised_params = [noised_state[k].numpy() for k in self.model.state_dict().keys()]
-        noised_params = [curr_state[k].numpy() for k in sd_now.keys()]
-        
-        # Optional: log clip factor for debugging
-        metrics["clip_factor"] = clip_factor
-
+        metrics = {**metrics, "eval_loss": metrics['eval_loss'], "eval_accuracy":  metrics['eval_accuracy'], "noise_scale": self.noise_scale, "loss": train_loss,}
+        print(f"[Client] Round metrics: {metrics}") # print for sanity check
         return (
-            # self.get_parameters({}),
-            noised_params,
+            self.get_parameters({}),
             len(self.train_dataset),
             metrics,
         )
@@ -454,8 +344,7 @@ def gen_client_fn(
     training_args,
     model_args,
     data_args,
-    label_list,
-    dp_args: Optional["DpArguments"] = None,
+    label_list
 ) -> Callable[[str], HuggingFaceClient]:  # pylint: disable=too-many-arguments
     """Generate the client function that creates the Flower Clients."""
 
@@ -535,9 +424,7 @@ def gen_client_fn(
             training_args,
             tokenizer,
             data_collator,
-            data_args.task_name,
-            dp_args=dp_args
-        ).to_client()
+            data_args.task_name).to_client()
     return client_fn
 
 #Server
@@ -616,40 +503,9 @@ def get_evaluate_fn(model_args, save_every_round, total_round, save_path,trainin
             with open(model_performance_file, mode='a', newline='') as file:
                 writer = csv.writer(file)
                 writer.writerow(row)  # Writing a new row in each iteration
-            print("Evaluate done in server_round:", server_round)
+            print(f"FINAL IS HERE: {server_round}")
             print(eval_res)
         return float(loss), {"accuracy":accuracy}
         # return 0.0, {}
     return evaluate
     # was return evaluate
-
-
-def get_noise_multiplier(
-    target_epsilon: float,
-    num_rounds: int,
-    clients_per_round: int,
-    total_clients: int,
-    delta: float = 1e-5,
-    alphas: list[float] = [1 + x / 10.0 for x in range(1, 100)] + list(range(12, 64))
-) -> float:
-    """Calculates the noise multiplier for a given epsilon budget using RDP."""
-    q = clients_per_round / total_clients
-    if q > 1.0:
-        raise ValueError("q must be <= 1.0")
-    
-    if q == 0.0:
-        return np.inf
-
-    # Binary search for the noise multiplier
-    low = 0.0
-    high = 20.0
-    while high - low > 1e-3:
-        sigma = (low + high) / 2
-        rdp = compute_rdp(q, sigma, steps=num_rounds, orders=alphas)
-        epsilon, _, _ = get_privacy_spent(orders=alphas, rdp=rdp, target_delta=delta)
-        if epsilon < target_epsilon:
-            low = sigma
-        else:
-            high = sigma
-    
-    return low

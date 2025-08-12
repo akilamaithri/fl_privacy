@@ -9,8 +9,8 @@ import matplotlib.pyplot as plt
 from typing import List, Tuple, Union
 import warnings
 
-import fs_rdp_bounds as fsrdp
-
+# import fs_rdp_bounds as fsrdp
+from . import fs_rdp_bounds as fsrdp
 
 def K_Wang(alpha,sigma):
     K_terms=[1.]
@@ -78,11 +78,7 @@ def get_eps(*, orders: Union[List[float], float], rdp
     rdp_vec = np.atleast_1d(rdp)
 
     if len(orders_vec) != len(rdp_vec):
-        raise ValueError(
-            f"Input lists must have the same length.\n"
-            f"\torders_vec = {orders_vec}\n"
-            f"\trdp_vec = {rdp_vec}\n"
-        )
+        raise ValueError("Input lists must have the same length.")
 
     eps = (
         rdp_vec
@@ -102,66 +98,81 @@ def get_eps(*, orders: Union[List[float], float], rdp
         )
     return eps[idx_opt], orders_vec[idx_opt]
 
-def return_epsilon(sigma,mode,dataset_size):
+def compute_epsilon(sigma,mode,dataset_size,num_rounds):
     n_train = dataset_size
-    batch_size = 550
+    batch_size = 128 # was 550
     q=batch_size/n_train
     r_over_sigma_tilde=2./sigma
     N_alpha=500
     alpha_array=1+10**np.linspace(-1,1.5,N_alpha)
     m_array=[4]
-    N_m=len(m_array)
+    # N_m=len(m_array)
     delta = 1/dataset_size
-    n_epochs = 20
 
-    accu_factor = n_train / batch_size * n_epochs
+    # n_epochs = 2  # was 20
+
+    # accu_factor = n_train / batch_size * n_epochs
 
         
     ### plot guarantees
     if(mode == "our"):
-        eps_array=np.zeros((N_m,N_alpha))
-        for j1 in range(N_m):
-            for j2 in range(N_alpha):
-                eps_array[j1,j2]=fsrdp.FSwoR_RDP_ro(alpha_array[j2], sigma, m_array[j1], q)
-        rdp = eps_array[0, :] * accu_factor
-        ep, alpha = get_eps(orders = alpha_array, rdp = rdp, delta = delta)
-    elif(mode == "wang"):
-        Wang_eps_array=np.zeros(N_alpha)
-        for j1 in range(N_alpha):
-            Wang_eps_array[j1]=Wang_et_al_upper_bound(alpha_array[j1],sigma)
-        rdp = Wang_eps_array * accu_factor
-        ep, alpha = get_eps(orders = alpha_array, rdp = rdp, delta = delta)
-    elif(mode == "rdp"):
-        eps_array_poisson = np.zeros((N_m,N_alpha))
-        for j1 in range(N_m):
-            for j2 in range(N_alpha):
-                eps_array_poisson[j1,j2]=fsrdp.Poisson_RDP_ro(alpha_array[j2], sigma, m_array[j1], q)
-        rdp = eps_array_poisson[0, :] * accu_factor
-        ep, alpha = get_eps(orders = alpha_array, rdp = rdp, delta = delta)
+        eps_array = np.zeros((len(m_array), len(alpha_array)))
+        for j1 in range(len(m_array)):
+            for j2 in range(len(alpha_array)):
+                eps_array[j1, j2] = fsrdp.FSwoR_RDP_ro(alpha_array[j2], sigma, m_array[j1], q)
+        rdp = eps_array[0, :] * num_rounds
+        ep, _ = get_eps(orders=alpha_array, rdp=rdp, delta=delta)
+        return ep
+    elif mode == "rdp_poisson":
+        eps_array_poisson = np.zeros((len(m_array), len(alpha_array)))
+        for j1 in range(len(m_array)):
+            for j2 in range(len(alpha_array)):
+                eps_array_poisson[j1, j2] = fsrdp.Poisson_RDP_ro(alpha_array[j2], 2*sigma, m_array[j1], q)
+        rdp = eps_array_poisson[0, :] * num_rounds
+        ep, _ = get_eps(orders=alpha_array, rdp=rdp, delta=delta)
+        return ep
+    
+    return np.inf
 
-    # print("Poisson Subsampled RDP {}".format(ep))
-    return ep
+def get_fsrdp_noise_multiplier(
+    target_epsilon: float,
+    num_rounds: int,
+    dataset_size: int,
+    mode: str = "our",
+    delta: float = 1e-5
+) -> float:
+    """Calculates the noise multiplier for a given epsilon budget using FS-RDP."""
+    low = 0.0
+    high = 20.0
+    while high - low > 1e-3:
+        sigma = (low + high) / 2
+        epsilon_val = compute_epsilon(sigma, mode, dataset_size, num_rounds)
+        if epsilon_val < target_epsilon:
+            low = sigma
+        else:
+            high = sigma
+    return low
 
-def find_proper_noise(target_epsilon,mode,max_noise,steps,dataset_size):
-    epsilon_map = {}
-    diffs = []
-    for i in range(1,max_noise*steps):
-        noise = i * (1/steps)
-        diff = abs(target_epsilon-return_epsilon(noise,mode,dataset_size))
-        diffs.append(diff)
-        epsilon_map[diff] = noise
-    min_value = min(diffs)
-    with open("kasra_experment.txt", "a") as f:
-        f.write(f"noise should be {epsilon_map[min_value]}, for epsilon {target_epsilon}, mode is {mode}, diff is {min_value}, data_set size is: {dataset_size}\n")
-    print("noise should be {}, for epsilon {}, mode is {}, diff is {}".format(epsilon_map[min_value],target_epsilon,mode,min_value))
+# def find_proper_noise(target_epsilon,mode,max_noise,steps,dataset_size):
+#     epsilon_map = {}
+#     diffs = []
+#     for i in range(1,max_noise*steps):
+#         noise = i * (1/steps)
+#         diff = abs(target_epsilon-return_epsilon(noise,mode,dataset_size))
+#         diffs.append(diff)
+#         epsilon_map[diff] = noise
+#     min_value = min(diffs)
+#     with open("kasra_experment.txt", "a") as f:
+#         f.write(f"noise should be {epsilon_map[min_value]}, for epsilon {target_epsilon}, mode is {mode}, diff is {min_value}, data_set size is: {dataset_size}\n")
+#     print("noise should be {}, for epsilon {}, mode is {}, diff is {}".format(epsilon_map[min_value],target_epsilon,mode,min_value))
 
-modes = ["wang","our","rdp"]
-target_epsilons = [10]
-dataset_size_list = [3491,3357,2244,2159,5869]
-for mode in modes:
-    for epsilon in target_epsilons:
-        for dataset in dataset_size_list:
-            find_proper_noise(target_epsilon=epsilon,mode=mode,max_noise=5,steps=100,dataset_size=dataset)
+# modes = ["wang","our","rdp"]
+# target_epsilons = [10]
+# dataset_size_list = [3491,3357,2244,2159,5869]
+# for mode in modes:
+#     for epsilon in target_epsilons:
+#         for dataset in dataset_size_list:
+#             find_proper_noise(target_epsilon=epsilon,mode=mode,max_noise=5,steps=100,dataset_size=dataset)
 
 
 

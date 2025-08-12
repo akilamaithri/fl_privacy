@@ -47,7 +47,8 @@ import six
 # LOG-SPACE ARITHMETIC #
 ########################
 
-
+# this function is used to add two numbers in the log space.
+# Adds exp(logx) + exp(logy) safely.
 def _log_add(logx, logy):
   """Add two numbers in the log space."""
   a, b = min(logx, logy), max(logx, logy)
@@ -56,7 +57,12 @@ def _log_add(logx, logy):
   # Use exp(a) + exp(b) = (exp(a - b) + 1) * exp(b)
   return math.log1p(math.exp(a - b)) + b  # log1p(x) = log(x + 1)
 
-
+# This function is used to subtract two numbers in the log space.
+# Subtracts exp(logx) - exp(logy) safely.
+# Returns -np.inf if the result is 0.
+# Raises ValueError if the result is negative.
+# Note that this function is not used in the main code, but it is useful for
+# debugging and testing purposes.
 def _log_sub(logx, logy):
   """Subtract two numbers in the log space. Answer must be non-negative."""
   if logx < logy:
@@ -72,7 +78,10 @@ def _log_sub(logx, logy):
   except OverflowError:
     return logx
 
-
+# This function is used to pretty print a number in the log space.
+# If the number is too large, it returns the string "exp(logx)".
+# Otherwise, it returns the number as a string.
+# This function is used for debugging and testing purposes.
 def _log_print(logx):
   """Pretty print."""
   if logx < math.log(sys.float_info.max):
@@ -80,7 +89,11 @@ def _log_print(logx):
   else:
     return "exp({})".format(logx)
 
-
+#=======Compute RDP of Sampled Gaussian Mechanism (SGM)=======
+# This function computes log(A_alpha) for a given q, sigma, and alpha.
+# q is sampling rate, sigma is the noise multiplier, and alpha is the Renyi order (mathematical parameter used in DP).
+# It is used to compute the RDP of the Sampled Gaussian Mechanism.
+# It uses the log-of-exp technique to avoid underflow.
 def _compute_log_a_int(q, sigma, alpha):
   """Compute log(A_alpha) for integer alpha. 0 < q < 1."""
   assert isinstance(alpha, six.integer_types)
@@ -98,7 +111,10 @@ def _compute_log_a_int(q, sigma, alpha):
 
   return float(log_a)
 
-
+# This function computes log(A_alpha) for fractional alpha.
+# It uses the log-of-exp technique to avoid underflow.
+# It is used to compute the RDP of the Sampled Gaussian Mechanism.
+# It is a helper function for _compute_log_a.
 def _compute_log_a_frac(q, sigma, alpha):
   """Compute log(A_alpha) for fractional alpha. 0 < q < 1."""
   # The two parts of A_alpha, integrals over (-inf,z0] and [z0, +inf), are
@@ -135,7 +151,12 @@ def _compute_log_a_frac(q, sigma, alpha):
 
   return _log_add(log_a0, log_a1)
 
-
+# This function computes log(A_alpha) for any positive finite alpha.
+# It uses the _compute_log_a_int and _compute_log_a_frac functions to compute
+# the log(A_alpha) based on whether alpha is an integer or a fraction.
+# It is used to compute the RDP of the Sampled Gaussian Mechanism.
+# It is a helper function for compute_rdp.
+# It raises ValueError if alpha is not a positive finite number.
 def _compute_log_a(q, sigma, alpha):
   """Compute log(A_alpha) for any positive finite alpha."""
   if float(alpha).is_integer():
@@ -143,7 +164,10 @@ def _compute_log_a(q, sigma, alpha):
   else:
     return _compute_log_a_frac(q, sigma, alpha)
 
-
+# This function computes the RDP of the Sampled Gaussian Mechanism.
+# It takes the sampling rate q, noise multiplier sigma, number of steps T, and a
+# list of orders as input.
+# It returns the RDP at all orders, which can be np.inf.
 def _log_erfc(x):
   """Compute log(erfc(x)) with high accuracy for large x."""
   try:
@@ -161,7 +185,10 @@ def _log_erfc(x):
     else:
       return math.log(r)
 
-
+# This function computes the RDP of the Sampled Gaussian Mechanism.
+# It takes the sampling rate q, noise multiplier sigma, number of steps T, and a
+# list of orders as input.
+# It returns the RDP at all orders, which can be np.inf.
 def _compute_delta(orders, rdp, eps):
   """Compute delta given a list of RDP values and target epsilon.
   Args:
@@ -183,7 +210,8 @@ def _compute_delta(orders, rdp, eps):
   idx_opt = np.argmin(deltas)
   return min(deltas[idx_opt], 1.), orders_vec[idx_opt]
 
-
+# This function computes the epsilon given a list of RDP values and target delta.
+# It takes the orders, RDP values, and delta as input.
 def _compute_eps(orders, rdp, delta):
   """Compute epsilon given a list of RDP values and target delta.
   Args:
@@ -206,7 +234,9 @@ def _compute_eps(orders, rdp, delta):
   idx_opt = np.nanargmin(eps)  # Ignore NaNs
   return eps[idx_opt], orders_vec[idx_opt]
 
-
+#=======Core RDP Calculations=======
+# This function tells how much Renyi Differential Privacy is used for one step of training. 
+# It’s like tracking how much privacy "budget" you've spent.
 def _compute_rdp(q, sigma, alpha):
   """Compute RDP of the Sampled Gaussian mechanism at order alpha.
   Args:
@@ -225,9 +255,11 @@ def _compute_rdp(q, sigma, alpha):
   if np.isinf(alpha):
     return np.inf
 
+  # Compute log(A_alpha) in the log space.
   return _compute_log_a(q, sigma, alpha) / (alpha - 1)
 
-
+# This scales the RDP calculation for steps (number of training steps) and orders (different Renyi α values to try).
+# It returns the RDP at all orders, which can be np.inf.
 def compute_rdp(q, noise_multiplier, steps, orders):
   """Compute RDP of the Sampled Gaussian Mechanism.
   Args:
@@ -247,7 +279,10 @@ def compute_rdp(q, noise_multiplier, steps, orders):
 
   return rdp * steps
 
-
+#=======Convert RDP to (ε, δ)=======
+# After computing RDP, we want to know real-world privacy values like ε and δ.
+# This function computes delta (or eps) for given eps (or delta) from RDP values.
+# This is used In FL to measure how much privacy is lost during training.
 def get_privacy_spent(orders, rdp, target_eps=None, target_delta=None):
   """Compute delta (or eps) for given eps (or delta) from RDP values.
   Args:
@@ -277,7 +312,10 @@ def get_privacy_spent(orders, rdp, target_eps=None, target_delta=None):
     eps, opt_order = _compute_eps(orders, rdp, target_delta)
     return eps, target_delta, opt_order
 
-
+#=======Compute RDP from Ledger=======
+# This function computes RDP of Sampled Gaussian Mechanism from a privacy ledger.
+# It takes a formatted privacy ledger and a list of orders as input.
+# It returns the RDP at all orders, which can be np.inf.
 def compute_rdp_from_ledger(ledger, orders):
   """Compute RDP of Sampled Gaussian Mechanism from ledger.
   Args:
