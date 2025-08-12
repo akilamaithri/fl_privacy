@@ -280,7 +280,9 @@ class HuggingFaceClient(fl.client.NumPyClient):
         self.dataset_name = task_name
         self.dp_args = dp_args 
 
-        #end
+        # Track latest training loss and DP noise scale for debugging/logging
+        self.local_loss = None
+        self.dp_noise_scale = None
     def get_parameters(self,config):
         return [val.cpu().numpy() for _, val in self.model.state_dict().items()]
 
@@ -336,6 +338,7 @@ class HuggingFaceClient(fl.client.NumPyClient):
     def fit(self, parameters, config):
         self.set_parameters(parameters) # sets current global weights.
 
+<<<<<<< HEAD
         # 5pm 12aug
         orig_state = {k: v.detach().cpu().clone() for k, v in self.model.state_dict().items()}    
 
@@ -354,6 +357,29 @@ class HuggingFaceClient(fl.client.NumPyClient):
             print(f"[Client] sigma_scale={scale:.4f} (dp_args not provided here)")
         # ---------------------------------------
 
+=======
+        # Determine DP noise scale from config (with fallback)
+        noise_scale = config.get("noise_scale")
+        sigma_min = config.get("sigma_min")
+        try:
+            sigma_min = float(sigma_min) if sigma_min is not None else None
+        except (TypeError, ValueError):
+            sigma_min = None
+        error_msg = None
+        try:
+            noise_scale = float(noise_scale) if noise_scale is not None else None
+        except (TypeError, ValueError):
+            error_msg = f"Invalid noise_scale: {noise_scale}"
+            noise_scale = None
+
+        if noise_scale is None:
+            self.dp_noise_scale = sigma_min
+        elif noise_scale <= 0:
+            error_msg = f"Invalid noise_scale: {noise_scale}"
+            self.dp_noise_scale = sigma_min
+        else:
+            self.dp_noise_scale = noise_scale
+>>>>>>> 2fd4478244e3fd9316c95dc4afcb40c0a0cbc6b4
         def compute_metrics(p: EvalPrediction):
             preds = p.predictions[0] if isinstance(p.predictions, tuple) else p.predictions
             preds = np.argmax(preds, axis=1)
@@ -372,9 +398,16 @@ class HuggingFaceClient(fl.client.NumPyClient):
             data_collator=self.data_collator
         )
         results = trainer.train()
+        self.local_loss = results.training_loss
         # debug print
-        print(f"[Client] Training complete: loss={results.training_loss}, steps={results.global_step}")
-        metrics = {}
+        print(
+            f"[Client] Training complete: loss={results.training_loss}, steps={results.global_step}, noise_scale={self.dp_noise_scale}"
+        )
+
+        metrics = {"loss": self.local_loss, "dp_noise_scale": self.dp_noise_scale}
+        if error_msg:
+            metrics["error"] = error_msg
+
         eval_res = trainer.evaluate()
         metrics['eval_loss'] = eval_res['eval_loss']
         metrics['eval_accuracy'] = eval_res['eval_accuracy']
@@ -441,6 +474,8 @@ class HuggingFaceClient(fl.client.NumPyClient):
         
         # Optional: log clip factor for debugging
         metrics["clip_factor"] = clip_factor
+        metrics["eval_loss"] = eval_res["eval_loss"]
+        metrics["eval_accuracy"] = eval_res["eval_accuracy"]
 
         return (
             # self.get_parameters({}),
