@@ -314,7 +314,6 @@ local_dp_mod = LocalDpDynamicMod(
     clipping_norm=1.0, 
     base_noise=0.005,
     max_rounds=5,
-    dataset_size=dataset_size,
 )
 
 client = fl.client.ClientApp(
