@@ -14,9 +14,8 @@
 # ==============================================================================
 """Local DP modifier."""
 
-
 from logging import INFO
-
+from privacy_tools.rdp_accountant import compute_rdp, get_privacy_spent
 import numpy as np
 
 from flwr.client.typing import ClientAppCallable
@@ -25,116 +24,231 @@ from flwr.common import recordset_compat as compat
 from flwr.common.constant import MessageType
 from flwr.common.context import Context
 from flwr.server.superlink.state import State, StateFactory
-# from flwr.common.differential_privacy import ( -- not using flwr cls
+# from flwr.common.differential_privacy import (
+#     add_localdp_fixed_gaussian_noise_to_params,
+#     compute_clip_model_update,
+# )
 from fixed.differential_privacy import (
+    add_localdp_fixed_gaussian_noise_to_params,
     add_localdp_gaussian_noise_to_params,
-    add_localdp_fixed_gaussian_noise_to_params,  # -- added for fixed noise by authors
     compute_clip_model_update,
 )
 from flwr.common.logger import log
 from flwr.common.message import Message
 
+import json
+import os
 
-class LocalDpFixedMod:
-    """Modifier for local differential privacy.
 
-    This mod clips the client model updates and
-    adds noise to the params before sending them to the server.
-
-    It operates on messages of type `MessageType.TRAIN`.
-
-    Parameters
-    ----------
-    clipping_norm : float
-        The value of the clipping norm.
-    sensitivity : float
-        The sensitivity of the client model.
-    epsilon : float
-        The privacy budget.
-        Smaller value of epsilon indicates a higher level of privacy protection.
-    delta : float
-        The failure probability.
-        The probability that the privacy mechanism
-        fails to provide the desired level of privacy.
-        A smaller value of delta indicates a stricter privacy guarantee.
-
-    epsilon_list : list[float] | None
-        Per-client epsilon values when using epsilon/delta based accounting.
-    delta_list : list[float] | None
-        Per-client delta values when using epsilon/delta based accounting.
-    noise_list : list[float] | None
-        Pre-computed noise standard deviations for each client. When provided,
-        ``epsilon_list`` and ``delta_list`` are ignored and ``noise_list`` is
-        used to add Gaussian noise.
-
-    Examples
-    --------
-    Create an instance of the local DP mod and add it to the client-side mods:
-
-    >>> local_dp_mod = LocalDpMod( ... )
-    >>> app = fl.client.ClientApp(
-    >>>     client_fn=client_fn, mods=[local_dp_mod]
-    >>> )
-    """
-
-    def __init__(
-        self,
-        clipping_norm: float,
-        # epsilon_list: list[float],
-        # delta_list: list[float]
-        # now accepts either epsi./delta or a noise list
-        epsilon_list: list[float] | None = None,
-        delta_list: list[float] | None = None,
-        noise_list: list[float] | None = None,
-    ) -> None:
+class LocalDpDynamicMod:
+    # def __init__(self, clipping_norm: float, base_noise: float, max_rounds: int = 10):
+    def __init__(self, clipping_norm: float, base_noise: float, 
+                 max_rounds: float, target_epsilon: float = 10.0, 
+                 clients_per_round: int = 3, total_clients: int = 4):
         if clipping_norm <= 0:
             raise ValueError("The clipping norm should be a positive value.")
-        # new check
-        if noise_list is None and (epsilon_list is None or delta_list is None):
-            raise ValueError(
-                "Either `noise_list` or both `epsilon_list` and `delta_list` must be provided."
-            )
+
+        # Add persistent round tracking for logging
+        self.persistent_round = 0
+        self.client_round_tracker = {}  # Track rounds per client
+        
         self.clipping_norm = clipping_norm
-        self.epsilon_list = epsilon_list
-        self.delta_list = delta_list
-        # new
-        self.noise_list = noise_list 
+        self.base_noise = base_noise
+        self.max_rounds = max_rounds
+        self.round_counter = 0
+        self.client_loss_history = {}  # Track per-client loss history
 
-    def __call__(
-        self, msg: Message, ctxt: Context, call_next: ClientAppCallable
-    ) -> Message:
-        """Perform local DP on the client model parameters.
+        # Privacy accounting-----------------------
+        self.target_epsilon = target_epsilon
+        self.q = clients_per_round / total_clients  # Sampling ratio
+        self.sensitivity = clipping_norm  # L2 sensitivity = clipping norm
 
-        Parameters
-        ----------
-        msg : Message
-            The message received from the server.
-        ctxt : Context
-            The context of the client.
-        call_next : ClientAppCallable
-            The callable to call the next middleware in the chain.
+        # implement a sampling strategy for alpha values used in RDP calc.
+        # First [] creates a desn grid of orders from 1.1 to 10.9 with 0.1 increments = 99 values
+        # Why? - Orders close to 1 often privde the tightest privacy bounds when converting from RDP to (epsilon, delta)-DP. 
+        # Second [] adds integer orders from 12 to 63, capturing privacy behaviour at higher orders. 
+        self.orders = [1 + x / 10.0 for x in range(1, 100)] + list(range(12, 64))
 
-        Returns
-        -------
-        Message
-            The modified message to be sent back to the server.
-        """
-        partition_id = ctxt.node_config["partition-id"]
-        print("Partition Id is : {}".format(partition_id))
+        # This array creates a 1:1 correspondence between each Renyi order and its accumulated privacy loss
+        # Throughout the federated learning process, each training round contributes additional privacy loss that gets added to this cumulative tracking array.
+        self.cumulative_rdp = np.zeros(len(self.orders))        
+
+        #ensure array is writeable - log 147017639
+        self.cumulative_rdp.flags.writeable = True
+        # End - Privacy accounting-----------------------
+
+        self.json_log_file = "./logs/14aug/metrics/privacy_metrics_new01.json"
+        os.makedirs(os.path.dirname(self.json_log_file), exist_ok=True)
+        self.metrics_data = []
+
+    def update_privacy_accounting(self, noise_std: float):
+        """Update cumulative RDP after each round."""
+
+        # Compute noise multiplier for this round
+        noise_multiplier = noise_std / self.sensitivity
+        
+        # Compute RDP for this round
+        round_rdp = compute_rdp(
+            q=self.q,
+            noise_multiplier=noise_multiplier, 
+            steps=1,  # One round
+            orders=self.orders
+        )
+        
+        # Handle read-only array by creating a new writeable copy if needed
+        if not self.cumulative_rdp.flags.writeable:
+            self.cumulative_rdp = np.copy(self.cumulative_rdp)
+
+        # Add to cumulative RDP
+        self.cumulative_rdp += round_rdp
+        
+        # Convert to (ε, δ) for monitoring
+        epsilon, delta, opt_order = get_privacy_spent(
+            orders=self.orders,
+            rdp=self.cumulative_rdp,
+            target_delta=1e-2
+        )
+        
+        print(f"[Privacy] After round {self.round_counter}:\n"
+              f"Epsilon (ε)={epsilon:.3f},\n"
+              f"Delta (δ)={delta:.2e},\n")
+        
+        # Warning if approaching target
+        # if epsilon > self.target_epsilon * 0.8:
+        #     print(f"[Privacy WARNING] Approaching target ε={self.target_epsilon}")
+        
+        return epsilon, delta    
+
+    def log_metrics_to_json(self, partition_id: int, dynamic_noise: float, 
+                        epsilon: float, delta: float, current_loss: float = None,
+                        round_factor: float = None, loss_factor: float = None):
+        """Append training metrics to JSON file for plotting."""
+        
+        # Create metrics entry
+        metrics_entry = {
+            "round": self.persistent_round,
+            "client_id": partition_id,
+            "noise_added": float(dynamic_noise),
+            "epsilon": float(epsilon),
+            "delta": float(delta),
+            "current_loss": float(current_loss) if current_loss is not None else None,
+            "base_noise": float(self.base_noise),
+            "clipping_norm": float(self.clipping_norm),
+            # "round_factor": float(round_factor) if round_factor is not None else None,
+            "loss_factor": float(loss_factor) if loss_factor is not None else None,
+            "noise_multiplier": float(dynamic_noise / self.clipping_norm),
+        }
+        
+        # Append to JSON file (one line per entry)
+        try:
+            with open(self.json_log_file, 'a') as f:
+                f.write(json.dumps(metrics_entry) + '\n')
+            print(f"[JSON LOG] Metrics saved for Client {partition_id}, Round {self.persistent_round}")
+        except Exception as e:
+            print(f"[JSON LOG ERROR] Failed to write metrics: {e}")
+
+    def compute_dynamic_noise(self, partition_id: int, current_loss: float = None) -> float:
+        """Simple dynamic noise computation based on round and optionally loss."""
+        
+        # Update persistent round counter for this client
+        if partition_id not in self.client_round_tracker:
+            self.client_round_tracker[partition_id] = 0
+        self.client_round_tracker[partition_id] = max(self.client_round_tracker[partition_id], self.round_counter)
+        
+        # Update global persistent round to maximum seen across all clients
+        self.persistent_round = max(self.client_round_tracker.values()) if self.client_round_tracker else self.round_counter
+
+        # Round-based decay (start high, decay over time) + the floor (30% minimum noise: + 0.3)
+        # Upper bound = 1.3
+        # Lower bound =~ 0.4
+        round_factor = np.exp(-self.round_counter / (self.max_rounds * 0.5)) + 0.3
+        
+        # Loss-based adjustment (if loss is provided)
+        loss_factor = 1.0
+        if current_loss is not None:
+            if partition_id in self.client_loss_history:
+                prev_losses = self.client_loss_history[partition_id]
+                if len(prev_losses) >= 2:
+                    # If loss is improving rapidly, reduce noise slightly
+                    improvement = (prev_losses[-1] - current_loss) / prev_losses[-1]
+                    loss_factor = max(0.5, 1.0 - improvement * 0.3)  # Cap reduction
+                
+                prev_losses.append(current_loss)
+                if len(prev_losses) > 3:  # Keep only last 3 losses
+                    prev_losses.pop(0)
+            else:
+                self.client_loss_history[partition_id] = [current_loss]
+
+        # Gradient norm factor
+        # grad_factor = 1.0
+        # if gradient_norm is not None:
+        #     # Track baseline gradient norm for this client
+        #     if partition_id not in self.client_grad_history:
+        #         self.client_grad_history[partition_id] = []
+            
+        #     grad_history = self.client_grad_history[partition_id]
+        #     grad_history.append(gradient_norm)
+        #     if len(grad_history) > 5:  # Keep last 5 measurements
+        #         grad_history.pop(0)
+            
+        #     # Compute baseline (moving average)
+        #     baseline_grad = np.mean(grad_history)
+        #     expected_bert_grad = 1e-3  # Expected BERT gradient magnitude
+            
+        #     # Scale relative to both baseline and expected magnitude
+        #     relative_grad = gradient_norm / max(baseline_grad, expected_bert_grad)
+        #     grad_factor = np.clip(relative_grad, 0.3, 3.0)  # Reasonable bounds
+    
+
+        # Combine factors
+        dynamic_noise = self.base_noise * round_factor * loss_factor
+
+        print(f"[Dynamic Noise] Client {partition_id}, Round {self.round_counter}:\n"
+              f"  base={self.base_noise:.20f}\n"
+              f"  round_factor={round_factor:.20f}\n"
+              f"  loss_factor={loss_factor:.20f}\n"
+              f"  -> noise={dynamic_noise:.20f}")
+
+        epsilon, delta = self.update_privacy_accounting(dynamic_noise)
+        
+        # Log metrics to JSON file
+        self.log_metrics_to_json(
+            partition_id=partition_id,
+            dynamic_noise=dynamic_noise/128,  # The actual noise added after scaling
+            epsilon=epsilon,
+            delta=delta,
+            current_loss=current_loss,
+            round_factor=round_factor,
+            loss_factor=loss_factor
+        )
+
+        return dynamic_noise
+
+    def __call__(self, msg: Message, ctxt: Context, call_next: ClientAppCallable) -> Message:
+        partition_id = int(ctxt.node_config["partition-id"])
+        
         if msg.metadata.message_type != MessageType.TRAIN:
             return call_next(msg, ctxt)
 
+        # Get server round from config if available
         fit_ins = compat.recordset_to_fitins(msg.content, keep_input=True)
+        if hasattr(fit_ins, 'config') and 'current_round' in fit_ins.config:
+            self.round_counter = int(fit_ins.config['current_round'])
+
         server_to_client_params = parameters_to_ndarrays(fit_ins.parameters)
 
-        # Call inner app
+        # Call inner app (training happens here)
         out_msg = call_next(msg, ctxt)
 
-        # Check if the msg has error
         if out_msg.has_error():
             return out_msg
 
         fit_res = compat.recordset_to_fitres(out_msg.content, keep_input=True)
+        
+        # Extract current loss from metrics if available
+        current_loss = None
+        if hasattr(fit_res, 'metrics') and 'eval_loss' in fit_res.metrics:
+            current_loss = float(fit_res.metrics['eval_loss'])
 
         client_to_server_params = parameters_to_ndarrays(fit_res.parameters)
 
@@ -144,52 +258,21 @@ class LocalDpFixedMod:
             server_to_client_params,
             self.clipping_norm,
         )
-        log(
-            INFO,
-            "LocalDpMod: parameters are clipped by value: %.4f.",
-            self.clipping_norm,
-        )
 
         fit_res.parameters = ndarrays_to_parameters(client_to_server_params)
 
-        # Add noise to model params - codex suggestion
-        # fit_res.parameters = add_localdp_gaussian_noise_to_params(
-        #     fit_res.parameters,
-        #     epsilon=self.epsilon_list[partition_id],
-        #     delta=self.delta_list[partition_id],
-        #     sensitivity=self.clipping_norm, #added 2nd time
-        # )
-        # log(
-        #     INFO,
-        #     "LocalDpMod: local DP noise added with ε=%.4f, δ=%.1e",
-        #     self.epsilon_list[partition_id],
-        #     self.delta_list[partition_id],
-        # )
+        # Compute dynamic noise
+        dynamic_noise = self.compute_dynamic_noise(partition_id, current_loss)
 
-        if self.noise_list is not None:
-            noise = self.noise_list[partition_id]
-            fit_res.parameters = add_localdp_fixed_gaussian_noise_to_params(
-                fit_res.parameters,
-                noise,
-            )
-            log(
-                INFO,
-                "LocalDpMod: local DP noise added with \u03c3=%.4f",
-                noise,
-            )
-        else:
-            fit_res.parameters = add_localdp_gaussian_noise_to_params(
-                fit_res.parameters,
-                epsilon=self.epsilon_list[partition_id],
-                delta=self.delta_list[partition_id],
-                sensitivity=self.clipping_norm,
-            )
-            log(
-                INFO,
-                "LocalDpMod: local DP noise added with ε=%.4f, δ=%.1e",
-                self.epsilon_list[partition_id],
-                self.delta_list[partition_id],
-            )
+        dynamic_noise = dynamic_noise/128
+
+        # Add dynamic noise to model params
+        fit_res.parameters = add_localdp_fixed_gaussian_noise_to_params(
+            fit_res.parameters, dynamic_noise
+        )
+        
+        log(INFO, f"LocalDpDynamicMod: dynamic noise {dynamic_noise:.4f} added to client {partition_id}")
 
         out_msg.content = compat.fitres_to_recordset(fit_res, keep_input=True)
         return out_msg
+

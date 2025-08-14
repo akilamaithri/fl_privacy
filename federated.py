@@ -7,6 +7,10 @@ import evaluate
 from flwr_datasets import FederatedDataset
 from flwr_datasets.partitioner import IidPartitioner,LinearPartitioner,SquarePartitioner,ExponentialPartitioner,SizePartitioner
 from datasets import load_dataset
+from flwr.client.mod import fixedclipping_mod
+from flwr.server.strategy import DifferentialPrivacyClientSideFixedClipping
+# from flwr.client.mod.localdp_mod import LocalDpMod    - this import is not used (codex)
+from fixed.localdp_fixed_mod import LocalDpDynamicMod
 from flwr.common import (
     NDArrays,
     Parameters,
@@ -40,32 +44,6 @@ from transformers.utils import check_min_version, send_example_telemetry
 from transformers.utils.versions import require_version
 from utils import *
 import csv
-from flwr.common.context import Context
-from privacy_tools import get_sigma
-from typing import Dict
-
-
-def compute_sigma_for_epsilon(
-    batch_size: int,
-    dataset_size: int,
-    num_rounds: int,
-    epsilon: float,
-    accountant: str,
-) -> float:
-    """Compute baseline sigma for a given epsilon."""
-    q = batch_size / dataset_size
-    steps = num_rounds * (dataset_size // batch_size)
-    delta = 1 / dataset_size
-    sigma, _ = get_sigma(
-        q,
-        steps,
-        epsilon,
-        delta,
-        init_sigma=2,
-        interval=0.5,
-        mode=accountant,
-    )
-    return sigma
 
 os.environ["HF_DATASETS_OFFLINE"] = "1"
 
@@ -209,11 +187,11 @@ else:
 metric = evaluate.load("glue", data_args.task_name)
 
 #ready to store the results
-file_name = data_args.task_name+"_"+data_args.partition_policy+"_"+str(data_args.epsilon)+"_"+data_args.accountant+".csv"
+file_name = data_args.task_name+"_"+data_args.partition_policy+"_"+str(data_args.epsilon)+"_"+data_args.accountant+"_new01"+".csv"
 # file_name = data_args.task_name+"_"+data_args.partition_policy+"_no_noise"+".csv"
 
 # model_performance_file = "./performance/DP_local_fixed/"+file_name
-model_performance_file = "./"+file_name
+model_performance_file = "./logs/14aug/csv/"+file_name
 headers = ['Round', 'Accuracy','Info']
 
 # Open the CSV file in write mode and add headers (this will overwrite if the file already exists)
@@ -221,74 +199,32 @@ with open(model_performance_file, mode='w', newline='') as file:
     writer = csv.writer(file)
     writer.writerow(headers)  # Writing headers
 
-
-class AdaptiveNoiseFedAvg(fl.server.strategy.FedAvg):
-    """Federated averaging strategy with per-client noise scaling."""
-
-    def __init__(self, sigma_min: float, **kwargs) -> None:
-        super().__init__(**kwargs)
-        self.sigma_min = sigma_min
-        self.client_losses: Dict[str, float] = {}
-        self.client_noise: Dict[str, float] = {}
-
-    def aggregate_fit(self, server_round, results, failures):  # noqa: D401
-        """Aggregate model updates and record client losses."""
-        for client_proxy, fit_res in results:
-            if fit_res.metrics is not None:
-                loss = fit_res.metrics.get("eval_loss")
-                if loss is not None:
-                    self.client_losses[client_proxy.cid] = loss
-        if self.client_losses:
-            max_loss = max(self.client_losses.values())
-            if max_loss == 0:
-                alphas = {cid: 1.0 for cid in self.client_losses}
-            else:
-                alphas = {
-                    cid: loss / max_loss for cid, loss in self.client_losses.items()
-                }
-            for cid, alpha in alphas.items():
-                self.client_noise[cid] = self.sigma_min * alpha
-        return super().aggregate_fit(server_round, results, failures)
-
-    def configure_fit(self, server_round, parameters, client_manager):
-        sample_size, min_num_clients = self.num_fit_clients(
-            client_manager.num_available()
-        )
-        clients = client_manager.sample(
-            num_clients=sample_size, min_num_clients=min_num_clients
-        )
-        config = {}
-        if self.on_fit_config_fn is not None:
-            config = self.on_fit_config_fn(server_round)
-        fit_config = []
-        for client in clients:
-            cid = client.cid
-            noise = self.client_noise.get(cid, self.sigma_min)
-            client_config = dict(config)
-            client_config["noise_scale"] = noise
-            fit_config.append((client, client_config))
-        return fit_config
-
 def server_fn(context: Context):
     # Define the Strategy
-    strategy = AdaptiveNoiseFedAvg(
-        sigma_min=sigma_min,
-        min_available_clients=cfg.flower.num_clients,
-        fraction_fit=cfg.flower.fraction_fit,
-        fraction_evaluate=0,
-        initial_parameters=ndarrays_to_parameters(initial_param),
-        evaluate_fn=get_evaluate_fn(
+    strategy = fl.server.strategy.FedAvg(
+    min_available_clients=cfg.flower.num_clients, # total clients
+    fraction_fit=cfg.flower.fraction_fit, # ratio of clients to sample
+    fraction_evaluate=0, # No federated evaluation
+    initial_parameters=ndarrays_to_parameters(initial_param),
+        # A (optional) function used to configure a "fit()" round
+    on_fit_config_fn=get_on_fit_config(),
+        # A (optional) function to aggregate metrics sent by clients
+    # fit_metrics_aggregation_fn=fit_weighted_average,
+        # A (optional) function to execute on the server after each round. 
+        # In this example the function only saves the global model.
+    evaluate_fn=get_evaluate_fn( 
             model_args,
             1,
             cfg.flower.num_rounds,
             "./result_model",
-            training_args,
+            training_args, #checktraining_args
             eval_dataset,
             tokenizer,
             data_collator,
             metric,
-            model_performance_file,
-        ),
+            model_performance_file
+            # save_every_round=1, # Save every round - Added later
+    ),
     )
 
     # # Add Differential Privacy
@@ -328,14 +264,57 @@ fds = FederatedDataset(
 )
 label_list = fds.load_partition(0).features["label"].names
 num_labels = len(label_list)
-
 dataset_size = len(fds.load_partition(0))
-sigma_min = compute_sigma_for_epsilon(
-    batch_size=training_args.per_device_train_batch_size,
+
+# visualize_partitions(fds_train)
+# local_dp_obj = LocalDpMod(cfg.flower.dp.clipping_norm, cfg.flower.dp.sensitivity, cfg.flower.dp.epsilon, cfg.flower.dp.delta)
+# dataset_size = len(fds.load_partition(0)). -- codex suggestion
+# my_sum = 0
+# for index in range(cfg.flower.num_clients):
+#     my_sum += len(fds.load_partition(index))
+#     print("Partition {}: {}".format(index,len(fds.load_partition(index))))
+# print("Overal is {}".format(my_sum))
+# noise_list = []
+# for index in range(cfg.flower.num_clients):
+#     batch_size = training_args.per_device_train_batch_size
+#     dataset_size = len(fds.load_partition(index))
+#     q = batch_size/dataset_size
+#     steps = cfg.flower.num_rounds * (dataset_size//batch_size)
+#     delta = 1/dataset_size
+#     sigma, eps = get_sigma(q, steps, data_args.epsilon, delta,init_sigma=2, interval=0.5, mode=data_args.accountant)
+#     print('noise std:', sigma, 'eps: ', eps)
+#     noise_list.append(sigma)
+# exit()
+
+# Build list of noises from JSON
+with open('noise_epsilon_10.json', 'r') as file:
+    noise = json.load(file)
+noise_list = noise[data_args.task_name][data_args.partition_policy][data_args.accountant]
+
+# epsilon_list = [data_args.epsilon] * cfg.flower.num_clients
+# delta_list = [1.0 / dataset_size] * cfg.flower.num_clients
+
+# if(len(noise_list)!=4):
+#     exit()
+
+if len(noise_list) != cfg.flower.num_clients:
+    exit()
+
+# local_dp_obj = LocalDpFixedMod(cfg.flower.dp.clipping_norm, epsilon_list, delta_list) 
+
+# codex suggestion - Load noise values and and constrcut LocalDpFixedMod
+# noise_list = [0.15, 0.15,..] as of now
+# local_dp_obj = LocalDpFixedMod(
+#     cfg.flower.dp.clipping_norm,
+#     noise_list=noise_list,
+# )
+
+#run new 1 - CN=1, BN=0.005
+local_dp_mod = LocalDpDynamicMod(
+    clipping_norm=1.0, 
+    base_noise=0.005,
+    max_rounds=5,
     dataset_size=dataset_size,
-    num_rounds=cfg.flower.num_rounds,
-    epsilon=data_args.epsilon,
-    accountant=data_args.accountant,
 )
 
 client = fl.client.ClientApp(
@@ -345,7 +324,8 @@ client = fl.client.ClientApp(
         model_args,
         data_args,
         label_list
-    )
+    ),
+    mods=[local_dp_mod] 
 )
 
 server = fl.server.ServerApp(server_fn=server_fn)
