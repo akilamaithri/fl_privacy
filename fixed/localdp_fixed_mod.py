@@ -55,6 +55,7 @@ class LocalDpDynamicMod:
         self.clipping_norm = clipping_norm
         self.base_noise = base_noise
         self.max_rounds = max_rounds
+        # self.dataset_size = dataset_size
         self.round_counter = 0
         self.client_loss_history = {}  # Track per-client loss history
 
@@ -77,7 +78,7 @@ class LocalDpDynamicMod:
         self.cumulative_rdp.flags.writeable = True
         # End - Privacy accounting-----------------------
 
-        self.json_log_file = "./logs/14aug/metrics/privacy_metrics_new01.json"
+        self.json_log_file = "./logs/14aug/metrics/privacy_metrics_new05.json"
         os.makedirs(os.path.dirname(self.json_log_file), exist_ok=True)
         self.metrics_data = []
 
@@ -86,7 +87,9 @@ class LocalDpDynamicMod:
 
         # Compute noise multiplier for this round
         noise_multiplier = noise_std / self.sensitivity
-        
+
+        print("Noise multiplier is:", noise_multiplier)
+
         # Compute RDP for this round
         round_rdp = compute_rdp(
             q=self.q,
@@ -107,6 +110,7 @@ class LocalDpDynamicMod:
             orders=self.orders,
             rdp=self.cumulative_rdp,
             target_delta=1e-2
+            # target_delta=self.dataset_size
         )
         
         print(f"[Privacy] After round {self.round_counter}:\n"
