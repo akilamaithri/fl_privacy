@@ -187,7 +187,7 @@ else:
 metric = evaluate.load("glue", data_args.task_name)
 
 #ready to store the results
-file_name = data_args.task_name+"_"+data_args.partition_policy+"_"+str(data_args.epsilon)+"_"+data_args.accountant+"_new01"+".csv"
+file_name = data_args.task_name+"_"+data_args.partition_policy+"_"+str(data_args.epsilon)+"_"+data_args.accountant+"_new10"+".csv"
 # file_name = data_args.task_name+"_"+data_args.partition_policy+"_no_noise"+".csv"
 
 # model_performance_file = "./performance/DP_local_fixed/"+file_name
@@ -310,10 +310,20 @@ if len(noise_list) != cfg.flower.num_clients:
 # )
 
 #run new 1 - CN=1, BN=0.005
+#run new 2 - CN=3, BN=0.05 - delta is 1/datasetsize
+#run new 3 - cn 3, bn = 0.009, Linear 
+#run 4 - not divided by 128 in localdp (67.log)
+# run 5 - divided by 128
+# run 6 - 
+# run 7 - bn 0.1, cn 3
+# run 8 - bn 0.1, cn 0.3
+# run 9 - rounds = 10
+# run 10 - rounds = 20
 local_dp_mod = LocalDpDynamicMod(
-    clipping_norm=1.0, 
-    base_noise=0.005,
-    max_rounds=5,
+    clipping_norm=0.3, 
+    base_noise=0.10,
+    max_rounds=20
+    # dataset_size=dataset_size,
 )
 
 client = fl.client.ClientApp(

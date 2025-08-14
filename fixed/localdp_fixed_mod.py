@@ -65,20 +65,16 @@ class LocalDpDynamicMod:
         self.sensitivity = clipping_norm  # L2 sensitivity = clipping norm
 
         # implement a sampling strategy for alpha values used in RDP calc.
-        # First [] creates a desn grid of orders from 1.1 to 10.9 with 0.1 increments = 99 values
-        # Why? - Orders close to 1 often privde the tightest privacy bounds when converting from RDP to (epsilon, delta)-DP. 
-        # Second [] adds integer orders from 12 to 63, capturing privacy behaviour at higher orders. 
         self.orders = [1 + x / 10.0 for x in range(1, 100)] + list(range(12, 64))
 
         # This array creates a 1:1 correspondence between each Renyi order and its accumulated privacy loss
-        # Throughout the federated learning process, each training round contributes additional privacy loss that gets added to this cumulative tracking array.
         self.cumulative_rdp = np.zeros(len(self.orders))        
 
         #ensure array is writeable - log 147017639
         self.cumulative_rdp.flags.writeable = True
         # End - Privacy accounting-----------------------
 
-        self.json_log_file = "./logs/14aug/metrics/privacy_metrics_new05.json"
+        self.json_log_file = "./logs/14aug/metrics/privacy_metrics_new10.json"
         os.makedirs(os.path.dirname(self.json_log_file), exist_ok=True)
         self.metrics_data = []
 
@@ -86,6 +82,7 @@ class LocalDpDynamicMod:
         """Update cumulative RDP after each round."""
 
         # Compute noise multiplier for this round
+        # = noise/clippingNorm
         noise_multiplier = noise_std / self.sensitivity
 
         print("Noise multiplier is:", noise_multiplier)
@@ -116,11 +113,7 @@ class LocalDpDynamicMod:
         print(f"[Privacy] After round {self.round_counter}:\n"
               f"Epsilon (ε)={epsilon:.3f},\n"
               f"Delta (δ)={delta:.2e},\n")
-        
-        # Warning if approaching target
-        # if epsilon > self.target_epsilon * 0.8:
-        #     print(f"[Privacy WARNING] Approaching target ε={self.target_epsilon}")
-        
+
         return epsilon, delta    
 
     def log_metrics_to_json(self, partition_id: int, dynamic_noise: float, 
@@ -165,7 +158,7 @@ class LocalDpDynamicMod:
         # Round-based decay (start high, decay over time) + the floor (30% minimum noise: + 0.3)
         # Upper bound = 1.3
         # Lower bound =~ 0.4
-        round_factor = np.exp(-self.round_counter / (self.max_rounds * 0.5)) + 0.3
+        round_factor = np.exp(-self.round_counter / (self.max_rounds * 0.5)) + 0.5
         
         # Loss-based adjustment (if loss is provided)
         loss_factor = 1.0
@@ -175,7 +168,7 @@ class LocalDpDynamicMod:
                 if len(prev_losses) >= 2:
                     # If loss is improving rapidly, reduce noise slightly
                     improvement = (prev_losses[-1] - current_loss) / prev_losses[-1]
-                    loss_factor = max(0.5, 1.0 - improvement * 0.3)  # Cap reduction
+                    loss_factor = max(0.8, 1.2 - improvement * 0.3)  # Cap reduction
                 
                 prev_losses.append(current_loss)
                 if len(prev_losses) > 3:  # Keep only last 3 losses
@@ -183,28 +176,6 @@ class LocalDpDynamicMod:
             else:
                 self.client_loss_history[partition_id] = [current_loss]
 
-        # Gradient norm factor
-        # grad_factor = 1.0
-        # if gradient_norm is not None:
-        #     # Track baseline gradient norm for this client
-        #     if partition_id not in self.client_grad_history:
-        #         self.client_grad_history[partition_id] = []
-            
-        #     grad_history = self.client_grad_history[partition_id]
-        #     grad_history.append(gradient_norm)
-        #     if len(grad_history) > 5:  # Keep last 5 measurements
-        #         grad_history.pop(0)
-            
-        #     # Compute baseline (moving average)
-        #     baseline_grad = np.mean(grad_history)
-        #     expected_bert_grad = 1e-3  # Expected BERT gradient magnitude
-            
-        #     # Scale relative to both baseline and expected magnitude
-        #     relative_grad = gradient_norm / max(baseline_grad, expected_bert_grad)
-        #     grad_factor = np.clip(relative_grad, 0.3, 3.0)  # Reasonable bounds
-    
-
-        # Combine factors
         dynamic_noise = self.base_noise * round_factor * loss_factor
 
         print(f"[Dynamic Noise] Client {partition_id}, Round {self.round_counter}:\n"
@@ -268,11 +239,9 @@ class LocalDpDynamicMod:
         # Compute dynamic noise
         dynamic_noise = self.compute_dynamic_noise(partition_id, current_loss)
 
-        dynamic_noise = dynamic_noise/128
-
         # Add dynamic noise to model params
         fit_res.parameters = add_localdp_fixed_gaussian_noise_to_params(
-            fit_res.parameters, dynamic_noise
+            fit_res.parameters, dynamic_noise/550
         )
         
         log(INFO, f"LocalDpDynamicMod: dynamic noise {dynamic_noise:.4f} added to client {partition_id}")
