@@ -74,7 +74,7 @@ class LocalDpDynamicMod:
         self.cumulative_rdp.flags.writeable = True
         # End - Privacy accounting-----------------------
 
-        self.json_log_file = "./logs/14aug/metrics/privacy_metrics_new10.json"
+        self.json_log_file = "./logs/14aug/metrics/privacy_metrics_new11.json"
         os.makedirs(os.path.dirname(self.json_log_file), exist_ok=True)
         self.metrics_data = []
 
@@ -241,7 +241,7 @@ class LocalDpDynamicMod:
 
         # Add dynamic noise to model params
         fit_res.parameters = add_localdp_fixed_gaussian_noise_to_params(
-            fit_res.parameters, dynamic_noise/550
+            fit_res.parameters, dynamic_noise/128
         )
         
         log(INFO, f"LocalDpDynamicMod: dynamic noise {dynamic_noise:.4f} added to client {partition_id}")
