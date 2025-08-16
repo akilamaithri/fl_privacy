@@ -43,7 +43,7 @@ import os
 class LocalDpDynamicMod:
     # def __init__(self, clipping_norm: float, base_noise: float, max_rounds: int = 10):
     def __init__(self, clipping_norm: float, base_noise: float, 
-                 max_rounds: float, task_name: str, partition: str, target_epsilon: float,
+                 max_rounds: float, target_epsilon: float = 10.0, 
                  clients_per_round: int = 3, total_clients: int = 4):
         if clipping_norm <= 0:
             raise ValueError("The clipping norm should be a positive value.")
@@ -55,8 +55,8 @@ class LocalDpDynamicMod:
         self.clipping_norm = clipping_norm
         self.base_noise = base_noise
         self.max_rounds = max_rounds
+        # self.dataset_size = dataset_size
         self.round_counter = 0
-        self.total_clients = total_clients
         self.client_loss_history = {}  # Track per-client loss history
 
         # Privacy accounting-----------------------
@@ -65,16 +65,20 @@ class LocalDpDynamicMod:
         self.sensitivity = clipping_norm  # L2 sensitivity = clipping norm
 
         # implement a sampling strategy for alpha values used in RDP calc.
+        # First [] creates a desn grid of orders from 1.1 to 10.9 with 0.1 increments = 99 values
+        # Why? - Orders close to 1 often privde the tightest privacy bounds when converting from RDP to (epsilon, delta)-DP. 
+        # Second [] adds integer orders from 12 to 63, capturing privacy behaviour at higher orders. 
         self.orders = [1 + x / 10.0 for x in range(1, 100)] + list(range(12, 64))
 
         # This array creates a 1:1 correspondence between each Renyi order and its accumulated privacy loss
+        # Throughout the federated learning process, each training round contributes additional privacy loss that gets added to this cumulative tracking array.
         self.cumulative_rdp = np.zeros(len(self.orders))        
 
         #ensure array is writeable - log 147017639
         self.cumulative_rdp.flags.writeable = True
         # End - Privacy accounting-----------------------
 
-        self.json_log_file = f"./logs/16aug/metrics/{task_name}_{partition}.json"
+        self.json_log_file = "./logs/14aug/metrics/privacy_metrics_new05.json"
         os.makedirs(os.path.dirname(self.json_log_file), exist_ok=True)
         self.metrics_data = []
 
@@ -82,7 +86,6 @@ class LocalDpDynamicMod:
         """Update cumulative RDP after each round."""
 
         # Compute noise multiplier for this round
-        # = noise/clippingNorm
         noise_multiplier = noise_std / self.sensitivity
 
         print("Noise multiplier is:", noise_multiplier)
@@ -101,18 +104,23 @@ class LocalDpDynamicMod:
 
         # Add to cumulative RDP
         self.cumulative_rdp += round_rdp
-
+        
         # Convert to (ε, δ) for monitoring
         epsilon, delta, opt_order = get_privacy_spent(
             orders=self.orders,
             rdp=self.cumulative_rdp,
             target_delta=1e-2
+            # target_delta=self.dataset_size
         )
         
         print(f"[Privacy] After round {self.round_counter}:\n"
               f"Epsilon (ε)={epsilon:.3f},\n"
-              f"Delta (δ)={delta:.5e},\n")
-
+              f"Delta (δ)={delta:.2e},\n")
+        
+        # Warning if approaching target
+        # if epsilon > self.target_epsilon * 0.8:
+        #     print(f"[Privacy WARNING] Approaching target ε={self.target_epsilon}")
+        
         return epsilon, delta    
 
     def log_metrics_to_json(self, partition_id: int, dynamic_noise: float, 
@@ -149,49 +157,54 @@ class LocalDpDynamicMod:
         # Update persistent round counter for this client
         if partition_id not in self.client_round_tracker:
             self.client_round_tracker[partition_id] = 0
+        self.client_round_tracker[partition_id] = max(self.client_round_tracker[partition_id], self.round_counter)
         
-        if self.client_round_tracker[partition_id] < self.round_counter:
-            self.client_round_tracker[partition_id] = self.round_counter
-  
-        client_rounds = self.client_round_tracker[partition_id]
-
         # Update global persistent round to maximum seen across all clients
         self.persistent_round = max(self.client_round_tracker.values()) if self.client_round_tracker else self.round_counter
-
-        # USE CLIENT-SPECIFIC ROUND COUNT instead of global round_counter
-        client_rounds = self.client_round_tracker[partition_id]
 
         # Round-based decay (start high, decay over time) + the floor (30% minimum noise: + 0.3)
         # Upper bound = 1.3
         # Lower bound =~ 0.4
-        # round_factor = np.exp(-self.round_counter / (self.max_rounds * 0.5)) + 0.5
-        # round_factor = np.exp(-client_rounds / (self.max_rounds * 0.5)) + 0.5
-        round_factor = np.exp(-client_rounds / (self.max_rounds * 0.5)) + 0.5
-
+        round_factor = np.exp(-self.round_counter / (self.max_rounds * 0.5)) + 0.3
+        
         # Loss-based adjustment (if loss is provided)
         loss_factor = 1.0
         if current_loss is not None:
             if partition_id in self.client_loss_history:
                 prev_losses = self.client_loss_history[partition_id]
-                # if len(prev_losses) >= 2:
-                if len(prev_losses) >= 1:
-                    recent_loss = prev_losses[-1]
-
-                    if recent_loss > 0:
-                        improvement = (recent_loss - current_loss) / recent_loss
-                        # More improvement = less noise, less improvement = more noise
-                        loss_factor = max(0.8, min(1.2, 1.0 - improvement * 0.5))
+                if len(prev_losses) >= 2:
+                    # If loss is improving rapidly, reduce noise slightly
+                    improvement = (prev_losses[-1] - current_loss) / prev_losses[-1]
+                    loss_factor = max(0.5, 1.0 - improvement * 0.3)  # Cap reduction
                 
                 prev_losses.append(current_loss)
                 if len(prev_losses) > 3:  # Keep only last 3 losses
                     prev_losses.pop(0)
             else:
-                # Round 1: Use absolute loss value for immediate differentiation
                 self.client_loss_history[partition_id] = [current_loss]
-                # Higher loss = more noise (clients struggling get more privacy protection)
-                # Scale around typical loss values (0.2-0.6 range)
-                loss_factor = 0.8 + min(0.6, current_loss * 0.8)
 
+        # Gradient norm factor
+        # grad_factor = 1.0
+        # if gradient_norm is not None:
+        #     # Track baseline gradient norm for this client
+        #     if partition_id not in self.client_grad_history:
+        #         self.client_grad_history[partition_id] = []
+            
+        #     grad_history = self.client_grad_history[partition_id]
+        #     grad_history.append(gradient_norm)
+        #     if len(grad_history) > 5:  # Keep last 5 measurements
+        #         grad_history.pop(0)
+            
+        #     # Compute baseline (moving average)
+        #     baseline_grad = np.mean(grad_history)
+        #     expected_bert_grad = 1e-3  # Expected BERT gradient magnitude
+            
+        #     # Scale relative to both baseline and expected magnitude
+        #     relative_grad = gradient_norm / max(baseline_grad, expected_bert_grad)
+        #     grad_factor = np.clip(relative_grad, 0.3, 3.0)  # Reasonable bounds
+    
+
+        # Combine factors
         dynamic_noise = self.base_noise * round_factor * loss_factor
 
         print(f"[Dynamic Noise] Client {partition_id}, Round {self.round_counter}:\n"
@@ -255,9 +268,11 @@ class LocalDpDynamicMod:
         # Compute dynamic noise
         dynamic_noise = self.compute_dynamic_noise(partition_id, current_loss)
 
+        dynamic_noise = dynamic_noise/128
+
         # Add dynamic noise to model params
         fit_res.parameters = add_localdp_fixed_gaussian_noise_to_params(
-            fit_res.parameters, dynamic_noise/128
+            fit_res.parameters, dynamic_noise
         )
         
         log(INFO, f"LocalDpDynamicMod: dynamic noise {dynamic_noise:.4f} added to client {partition_id}")

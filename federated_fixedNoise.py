@@ -10,7 +10,7 @@ from datasets import load_dataset
 from flwr.client.mod import fixedclipping_mod
 from flwr.server.strategy import DifferentialPrivacyClientSideFixedClipping
 # from flwr.client.mod.localdp_mod import LocalDpMod    - this import is not used (codex)
-from fixed.localdp_fixed_mod import LocalDpDynamicMod
+from fixed.localdp_fixed import LocalDpFixedMod
 from flwr.common import (
     NDArrays,
     Parameters,
@@ -187,11 +187,11 @@ else:
 metric = evaluate.load("glue", data_args.task_name)
 
 #ready to store the results
-file_name = data_args.task_name+"_"+data_args.partition_policy+".csv"
+file_name = data_args.task_name+"_"+data_args.partition_policy+"_ep17.csv"
 # file_name = data_args.task_name+"_"+data_args.partition_policy+"_no_noise"+".csv"
 
 # model_performance_file = "./performance/DP_local_fixed/"+file_name
-model_performance_file = "./logs/16aug/csv/"+file_name
+model_performance_file = "./logs/16aug/csvFx/"+file_name
 headers = ['Round', 'Accuracy','Info']
 
 # Open the CSV file in write mode and add headers (this will overwrite if the file already exists)
@@ -322,13 +322,9 @@ if len(noise_list) != cfg.flower.num_clients:
 # run 10 - rounds = 20
 # run 11 - noise/128
 # run 12 - noise/128, but 
-local_dp_mod = LocalDpDynamicMod(
+local_dp_mod = LocalDpFixedMod(
     clipping_norm=0.3, 
-    base_noise=0.10,
-    max_rounds=10,
-    task_name=data_args.task_name,
-    partition=data_args.partition_policy,
-    target_epsilon=data_args.epsilon
+    base_noise=0.06,
 )
 
 client = fl.client.ClientApp(

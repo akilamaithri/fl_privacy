@@ -43,8 +43,8 @@ import os
 class LocalDpDynamicMod:
     # def __init__(self, clipping_norm: float, base_noise: float, max_rounds: int = 10):
     def __init__(self, clipping_norm: float, base_noise: float, 
-                 max_rounds: float, task_name: str, partition: str, target_epsilon: float,
-                 clients_per_round: int = 3, total_clients: int = 4):
+                 max_rounds: float, task_name: str, partition: str, target_epsilon: float, 
+                 clients_per_round: int = 4, total_clients: int = 4):
         if clipping_norm <= 0:
             raise ValueError("The clipping norm should be a positive value.")
 
@@ -55,8 +55,8 @@ class LocalDpDynamicMod:
         self.clipping_norm = clipping_norm
         self.base_noise = base_noise
         self.max_rounds = max_rounds
+        # self.dataset_size = dataset_size
         self.round_counter = 0
-        self.total_clients = total_clients
         self.client_loss_history = {}  # Track per-client loss history
 
         # Privacy accounting-----------------------
@@ -74,7 +74,7 @@ class LocalDpDynamicMod:
         self.cumulative_rdp.flags.writeable = True
         # End - Privacy accounting-----------------------
 
-        self.json_log_file = f"./logs/16aug/metrics/{task_name}_{partition}.json"
+        self.json_log_file = f"./logs/15aug/metrics/{task_name}_{partition}_sat.json"
         os.makedirs(os.path.dirname(self.json_log_file), exist_ok=True)
         self.metrics_data = []
 
@@ -101,17 +101,18 @@ class LocalDpDynamicMod:
 
         # Add to cumulative RDP
         self.cumulative_rdp += round_rdp
-
+        
         # Convert to (ε, δ) for monitoring
         epsilon, delta, opt_order = get_privacy_spent(
             orders=self.orders,
             rdp=self.cumulative_rdp,
             target_delta=1e-2
+            # target_delta=self.dataset_size
         )
         
         print(f"[Privacy] After round {self.round_counter}:\n"
               f"Epsilon (ε)={epsilon:.3f},\n"
-              f"Delta (δ)={delta:.5e},\n")
+              f"Delta (δ)={delta:.2e},\n")
 
         return epsilon, delta    
 
@@ -149,48 +150,31 @@ class LocalDpDynamicMod:
         # Update persistent round counter for this client
         if partition_id not in self.client_round_tracker:
             self.client_round_tracker[partition_id] = 0
+        self.client_round_tracker[partition_id] = max(self.client_round_tracker[partition_id], self.round_counter)
         
-        if self.client_round_tracker[partition_id] < self.round_counter:
-            self.client_round_tracker[partition_id] = self.round_counter
-  
-        client_rounds = self.client_round_tracker[partition_id]
-
         # Update global persistent round to maximum seen across all clients
         self.persistent_round = max(self.client_round_tracker.values()) if self.client_round_tracker else self.round_counter
-
-        # USE CLIENT-SPECIFIC ROUND COUNT instead of global round_counter
-        client_rounds = self.client_round_tracker[partition_id]
 
         # Round-based decay (start high, decay over time) + the floor (30% minimum noise: + 0.3)
         # Upper bound = 1.3
         # Lower bound =~ 0.4
-        # round_factor = np.exp(-self.round_counter / (self.max_rounds * 0.5)) + 0.5
-        # round_factor = np.exp(-client_rounds / (self.max_rounds * 0.5)) + 0.5
-        round_factor = np.exp(-client_rounds / (self.max_rounds * 0.5)) + 0.5
-
+        round_factor = np.exp(-self.round_counter / (self.max_rounds * 0.5)) + 0.5
+        
         # Loss-based adjustment (if loss is provided)
         loss_factor = 1.0
         if current_loss is not None:
             if partition_id in self.client_loss_history:
                 prev_losses = self.client_loss_history[partition_id]
-                # if len(prev_losses) >= 2:
-                if len(prev_losses) >= 1:
-                    recent_loss = prev_losses[-1]
-
-                    if recent_loss > 0:
-                        improvement = (recent_loss - current_loss) / recent_loss
-                        # More improvement = less noise, less improvement = more noise
-                        loss_factor = max(0.8, min(1.2, 1.0 - improvement * 0.5))
+                if len(prev_losses) >= 2:
+                    # If loss is improving rapidly, reduce noise slightly
+                    improvement = (prev_losses[-1] - current_loss) / prev_losses[-1]
+                    loss_factor = max(0.8, 1.2 - improvement * 0.3)  # Cap reduction
                 
                 prev_losses.append(current_loss)
                 if len(prev_losses) > 3:  # Keep only last 3 losses
                     prev_losses.pop(0)
             else:
-                # Round 1: Use absolute loss value for immediate differentiation
                 self.client_loss_history[partition_id] = [current_loss]
-                # Higher loss = more noise (clients struggling get more privacy protection)
-                # Scale around typical loss values (0.2-0.6 range)
-                loss_factor = 0.8 + min(0.6, current_loss * 0.8)
 
         dynamic_noise = self.base_noise * round_factor * loss_factor
 
